@@ -1,0 +1,7 @@
+{
+    "python.pythonPath": "/home/benjami/.local/share/virtualenvs/tinymud-nSeHBsOd/bin/python", // TODO don't hardcode
+    "python.linting.pylintEnabled": false,
+    "python.linting.mypyEnabled": true,
+    "python.linting.flake8Enabled": true,
+    "python.linting.enabled": true
+}
