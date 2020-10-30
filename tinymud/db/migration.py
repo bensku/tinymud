@@ -6,7 +6,7 @@ from pathlib import Path
 
 from asyncpg import Connection
 
-from tinymud.db.schema import TableSchema, get_create_table
+from .schema import TableSchema, get_create_table
 
 
 class MigrationException(Exception):
@@ -49,8 +49,7 @@ class TableMigrator:
     async def _run_script(self, path: Path) -> None:
         """Loads an SQL script from file and run it."""
         with open(path, 'r') as f:
-            async with self.conn.transaction():
-                self.conn.executemany(f.read())
+            self.conn.executemany(f.read())
 
     async def _run_migrations(self, table: str, current_level: int) -> int:
         """Run migrations that have not been applied yet."""

@@ -1,6 +1,6 @@
 """Table schema management tools."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, TypedDict, Union
 
 
@@ -54,7 +54,8 @@ def new_table_schema(name: str, fields: Dict[str, type]) -> TableSchema:
 
     # Rest of columns in alphabetical order
     for name in sorted(fields.keys()):
-        columns.append(create_column(name, fields[name]))
+        if not name.startswith('_'):  # Ignore 'internal' fields
+            columns.append(create_column(name, fields[name]))
     return {'name': name, 'columns': columns}
 
 
@@ -77,7 +78,7 @@ class AlterRequest:
     """A request to alter table."""
     description: str
     sql: List[str]
-    input_needed: Dict[str, str] = {}
+    input_needed: Dict[str, str] = field(default_factory=dict)
 
 
 def update_table_schema(old_schema: TableSchema, fields: Dict[str, type]) -> Tuple[TableSchema, List[AlterRequest]]:
@@ -126,3 +127,38 @@ def update_table_schema(old_schema: TableSchema, fields: Dict[str, type]) -> Tup
 
     return {'name': table_name, 'columns': new_columns}, alter_requests
 
+
+def get_sql_insert(table: TableSchema) -> str:
+    """Creates SQL INSERT statement.
+
+    $1: entity id, $2-$n: values of columns
+    """
+    columns = []
+    for i, column in enumerate(table['columns']):
+        columns.append(f'${i}')
+    return f'INSERT INTO {table} VALUES ({", ".join(columns)})'
+
+
+def get_sql_select(table: str) -> str:
+    """Creates SQL SELECT query without conditions."""
+    return f'SELECT * FROM {table}'
+
+
+def get_sql_update(table: TableSchema) -> str:
+    """Creates SQL UPDATE statement.
+
+    $1: entity id, $2-$n: values of columns
+    """
+    columns = []
+    for i, column in enumerate(table['columns']):
+        if column['name'] != 'id':  # Ignore id column, it is condition for update
+            columns.append(f'{column["name"]} = ${i + 1}')
+    return f'UPDATE {table} SET {", ".join(columns)} WHERE id = $1'
+
+
+def get_sql_delete(table: str) -> str:
+    """Creates SQL DELETE statement.
+
+    $1: entity id
+    """
+    return f'DELETE FROM {table} WHERE id = $1'
