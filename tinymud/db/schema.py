@@ -45,7 +45,7 @@ class TableSchema(TypedDict):
     columns: List[Column]
 
 
-def new_table_schema(name: str, fields: Dict[str, type]) -> TableSchema:
+def new_table_schema(table_name: str, fields: Dict[str, type]) -> TableSchema:
     """Creates a new table schema from class fields."""
     columns: List[Column] = []
     # Id (primary key) always first
@@ -56,7 +56,7 @@ def new_table_schema(name: str, fields: Dict[str, type]) -> TableSchema:
     for name in sorted(fields.keys()):
         if not name.startswith('_'):  # Ignore 'internal' fields
             columns.append(create_column(name, fields[name]))
-    return {'name': name, 'columns': columns}
+    return {'name': table_name, 'columns': columns}
 
 
 def get_create_table(table: TableSchema) -> str:

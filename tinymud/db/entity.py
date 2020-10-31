@@ -8,8 +8,8 @@ from asyncpg import Connection, Record
 from asyncpg.pool import Pool
 
 from .migration import TableMigrator
-from .schema import TableSchema, get_create_table, new_table_schema
-from .schema import get_sql_delete, get_sql_insert, get_sql_select, get_sql_update
+import tinymud.db.schema as schema
+from .schema import TableSchema
 
 # Connection that can be used for one-shot operations
 # Don't ever use this for transactions!
@@ -82,15 +82,15 @@ def entity(entity_type: Type[T]) -> Type[T]:
             if name in fields:
                 pass  # TODO error
             fields[name] = field_type
-    schema = new_table_schema('tinymud_' + entity_type.__name__.lower(), fields)
-    entity_type._schema = schema
+    table = schema.new_table_schema('tinymud_' + entity_type.__name__.lower(), fields)
+    entity_type._schema = table
 
     # Figure out CREATE TABLE, INSERT, SELECT, UPDATE and DELETE
-    entity_type._sql_create_table = get_create_table(schema)
-    entity_type._sql_insert = get_sql_insert(schema)
-    entity_type._sql_select = get_sql_select(schema['name'])
-    entity_type._sql_update = get_sql_update(schema)
-    entity_type._sql_delete = get_sql_delete(schema['name'])
+    entity_type._sql_create_table = schema.get_create_table(table)
+    entity_type._sql_insert = schema.get_sql_insert(table)
+    entity_type._sql_select = schema.get_sql_select(table['name'])
+    entity_type._sql_update = schema.get_sql_update(table)
+    entity_type._sql_delete = schema.get_sql_delete(table['name'])
 
     # Patch in change detection for fields
     def mark_changed(self: T, key: str, value: str) -> None:
@@ -129,13 +129,14 @@ _async_init_needed: Set[Type[Entity]] = set()
 async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool):
     """Performs late/async initialization on entities."""
     migrator = TableMigrator(conn, db_data, prod_mode)
+    await migrator.create_sys_tables()
     for entity_type in _async_init_needed:
         # Ensure that the DB table exists and matches Python class
         table_schema = entity_type._schema
         await migrator.migrate_table(table_schema)
 
         # Figure out and inject next free id
-        entity_type._next_id = await conn.fetchvalue(f'SELECT COUNT(*) FROM {table_schema}')
+        entity_type._next_id = await conn.fetchval(f'SELECT COUNT(*) FROM {table_schema["name"]}')
 
 
 async def _save_entities_timer(conn_pool: Pool, interval: float) -> None:

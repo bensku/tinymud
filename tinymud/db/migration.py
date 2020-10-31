@@ -25,11 +25,11 @@ class TableMigrator:
 
         Returns current migration level (integer) for existing tables and None
         for those that have not yet been created."""
-        return await self.conn.fetchval('SELECT level FROM tinymud_migrations WHERE table = $1', table)
+        return await self.conn.fetchval('SELECT level FROM tinymud_migrations WHERE table_name = $1', table)
 
     async def _set_migration_level(self, table: str, level: int) -> None:
         """Sets current migration level of a table."""
-        await self.conn.execute('UPDATE tinymud_migrations SET level = $1 WHERE table = $2', level, table)
+        await self.conn.execute('UPDATE tinymud_migrations SET level = $1 WHERE table_name = $2', level, table)
 
     async def _schema_valid_prod(self, table: TableSchema) -> bool:
         """Checks if schema of given table is valid for production.
@@ -54,6 +54,11 @@ class TableMigrator:
     async def _run_migrations(self, table: str, current_level: int) -> int:
         """Run migrations that have not been applied yet."""
         sql_dir = self.migrations / table
+        if not sql_dir.exists():
+            if current_level > 0:  # Where did the previous migrations go?
+                raise MigrationException(f"{table} already has {current_level}, but directory is missing")
+            else:  # No migrations? That's ok
+                return 0
         for migration in sorted(sql_dir.iterdir()):
             level = int(migration.name.split('_')[0])
             if level > current_level:  # Not yet applied
@@ -67,9 +72,21 @@ class TableMigrator:
         """Creates a new table."""
         await self.conn.execute(get_create_table(table))
         # Initialize migration level (so that it can be altered in future)
-        await self.conn.execute('INSERT INTO tinymud_migrations (table, level) VALUES ($1, $2)', table, 0)
+        await self.conn.execute('INSERT INTO tinymud_migrations (table_name, level) VALUES ($1, $2)', table['name'], 0)
+
+    async def create_sys_tables(self):
+        """Creates system tables in database.
+
+        Call this before attempting to migrate anything. This is safe even if
+        the tables already exist.
+        """
+        await self.conn.execute("""CREATE TABLE IF NOT EXISTS tinymud_migrations (
+            table_name TEXT,
+            level INTEGER
+        )""")
 
     async def migrate_table(self, table: TableSchema) -> None:
+        """Creates or migrates given table."""
         name = table['name']
         # Do a basic sanity check if we're in production environment
         if self.prod_mode and not await self._schema_valid_prod(table):
