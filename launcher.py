@@ -6,6 +6,7 @@ from enum import Enum
 from multiprocessing import Process
 from pathlib import Path
 import signal
+import sys
 
 
 class FileSet(Enum):
@@ -30,6 +31,11 @@ def parse_args():
         help="Launch an empty development database with Docker.")
     parser.add_argument('--watch', type=FileSet, choices=list(FileSet),
         help="Watch file set for changes and reload it when they occur.")
+    parser.add_argument('--prod', default=False, help="Enables production mode.")  # FIXME WIP
+    parser.add_argument('--save-interval', default=30, type=float,
+        help="Sets the save interval (in seconds).")
+    parser.add_argument('--host', default='localhost', help="Application host.")
+    parser.add_argument('--port', default=8080, help="Application port.")
 
     return parser.parse_args()
 
@@ -52,9 +58,9 @@ def import_for_fork(reloadable: FileSet) -> None:
     pass  # TODO implement more :)
 
 
-def watch_files(reloadable: FileSet, game_path: str) -> None:
+def watch_files(reloadable: FileSet, game_path: Path):
     if reloadable == FileSet.NONE:
-        return  # Nothing to watch
+        return None  # Nothing to watch
     from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
 
@@ -73,18 +79,37 @@ def watch_files(reloadable: FileSet, game_path: str) -> None:
         observer.schedule(handler, game_path, recursive=True)
         observer.schedule(handler, 'tinymud', recursive=True)
     observer.start()
+    return observer
 
 
 _db_url: str  # Database URL for subprocess usage
 _dev_db = None  # Development database container (if present)
 _game_path: Path  # Game directory
+_prod_mode: bool
+_save_interval: int
+_host: str
+_port: int
+
 _mud_proc: Process  # Currently running subprocess
 _restart_flag: bool = True  # True if starting for first time or restarting
+_observer = None  # Observer for --watch, if watching any files
 
 
 def _mudproc_entrypoint():
+    if _observer:  # Let launcher process handle restarting
+        _observer.stop()
+
+    # Replace quit-signal handlers with sys.exit()
+    # While we do have handle to current process, it cannot be terminate()d
+    # outside of the process fork()ing to it (i.e. our parent, launcher)
+    signal.signal(signal.SIGINT, lambda signal, handler: sys.exit())
+    signal.signal(signal.SIGTERM, lambda signal, handler: sys.exit())
+
     import tinymud
-    asyncio.run(tinymud.start(_db_url, _game_path))
+    loop = asyncio.get_event_loop()
+    loop.create_task(tinymud.start(db_url=_db_url, game_path=_game_path,
+        prod_mode=_prod_mode, save_interval=_save_interval, host=_host, port=_port))
+    loop.run_forever()
 
 
 def launch_tinymud():
@@ -125,6 +150,15 @@ if __name__ == '__main__':
 
     # Convert game path to absolute to avoid "fun" if/when workdir changes
     _game_path = Path(args.game).absolute()
+
+    # Make rest of arguments available for forking
+    _prod_mode = args.prod
+    _save_interval = args.save_interval
+    _host = args.host
+    _port = args.port
+
+    # Watch for file changes to trigger reloads
+    _observer = watch_files(reloadable, _game_path)
 
     # Launch app unless we received SIGINT to stop
     while _restart_flag:
