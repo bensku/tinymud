@@ -1,8 +1,8 @@
 
 import asyncio
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Type, Set, TypeVar, Optional, get_type_hints
+from weakref import WeakValueDictionary
 
 from asyncpg import Connection, Record
 from asyncpg.pool import Pool
@@ -38,11 +38,20 @@ class Entity:
     # 'Entity' with attributes to support query DSL
     _field_names: object
 
+    # Cache to avoid querying out-of-date entities from database
+    # As long as change queue (or some other cache) holds the entity,
+    # this will keep it too
+    _cache: WeakValueDictionary
+
     @classmethod
-    async def get(cls: Type[T], id: int) -> T:
+    async def get(cls: Type[T], id: int) -> Optional[T]:
         """Gets an entity by id."""
+        cache: WeakValueDictionary = cls._cache
+        if id in cache:  # Check if our cache has it
+            return cache[id]
         query = cls._sql_select + ' WHERE id = $1'
-        return _record_to_obj(cls, await _entity_conn.fetchrow(query, id))
+        record = await _entity_conn.fetchrow(query, id)
+        return _record_to_obj(cls, record) if record else None
 
     @classmethod
     def c(cls: Type[T]) -> T:
@@ -63,11 +72,21 @@ class Entity:
             clauses.append(f'{field} {sql_op} ${len(values)}')
 
         query = entity._sql_select + ' WHERE ' + ' AND '.join(clauses)
+
+        # Query all matching from database
+        # Replace some records with entities from cache
+        # (DB may have entities missing from cache, so we need to query them anyway)
         async with _conn_pool.acquire() as conn:
-            # We're returning connection to pool, which MIGHT close it
-            # ... which means we better convert all records to entities NOW
-            # TODO figure out a way to keep connection open to support lazy loading
-            return list(map(lambda record: _record_to_obj(cls, record), conn.fetch(query, *values)))
+            cache: WeakValueDictionary = cls._cache
+            entities = []
+            for record in conn.fetch(query, *values):
+                entity_id = record[0]
+                if entity_id in cache:  # Use cached entity if possible
+                    entities.append(cache[entity_id])
+                else:  # Not found, actually convert record to entity
+                    entity = _record_to_obj(cls, record)
+                    entities.append(entity)
+            return entities
 
     @classmethod
     async def select(cls: Type[T], *args) -> Optional[T]:
@@ -137,6 +156,9 @@ def entity(entity_type: Type[T]) -> Type[T]:
         # Call old init to actually set fields
         # Also raises exceptions if there are extra values
         old_init(self, **kwargs)  # type: ignore
+
+        # Cache this entity to its type (weakly referenced)
+        entity_type._cache[self.id] = self
     setattr(entity_type, '__init__', new_init)
 
     # Figure out fields and create table schema based on them
@@ -169,6 +191,9 @@ def entity(entity_type: Type[T]) -> Type[T]:
         # Queue to be saved and prevent GC before that happens
         _changed_entities.add(self)
     setattr(entity_type, '__setattr__', mark_changed)
+
+    # Create entity cache for this type
+    entity_type._cache = WeakValueDictionary()
 
     # Queue for async init
     _async_init_needed.add(entity_type)
@@ -236,9 +261,3 @@ async def init_entity_system(conn_pool: Pool, db_data: Path, prod_mode: bool, sa
 
     # Periodically save newly created and modified entities
     asyncio.create_task(_save_entities_timer(save_interval))
-
-
-@entity
-@dataclass
-class GameObj(Entity):
-    foo: str
