@@ -1,7 +1,7 @@
 """Table schema management tools."""
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, TypedDict, Union
+from typing import Dict, List, Tuple, TypedDict
 
 
 class Column(TypedDict):
@@ -19,7 +19,8 @@ def create_column(name: str, py_type: type) -> Column:
 
 def _to_db_type(py_type: type) -> Tuple[str, bool]:
     """Maps a Python type to database type name."""
-    if py_type == Union:  # Optional[type] aliases to Union[type, None]
+    if hasattr(py_type, '__args__'):
+        # Optional[type] aliases to Union[type, None]
         # Mypy has incomplete types here
         args: List[type] = py_type.__args__  # type: ignore
         # args contains classes, not instances of them
@@ -50,11 +51,10 @@ def new_table_schema(table_name: str, fields: Dict[str, type]) -> TableSchema:
     columns: List[Column] = []
     # Id (primary key) always first
     columns.append(create_column('id', fields['id']))
-    del fields['id']
 
     # Rest of columns in alphabetical order
     for name in sorted(fields.keys()):
-        if not name.startswith('_'):  # Ignore 'internal' fields
+        if not name == 'id' and not name.startswith('_'):  # Ignore 'internal' fields
             columns.append(create_column(name, fields[name]))
     return {'name': table_name, 'columns': columns}
 
