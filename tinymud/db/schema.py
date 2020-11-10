@@ -1,7 +1,7 @@
 """Table schema management tools."""
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, TypedDict
+from typing import Dict, List, Tuple, TypedDict, Union, get_origin, get_args
 
 
 class Column(TypedDict):
@@ -19,10 +19,10 @@ def create_column(name: str, py_type: type) -> Column:
 
 def _to_db_type(py_type: type) -> Tuple[str, bool]:
     """Maps a Python type to database type name."""
-    if hasattr(py_type, '__args__'):
+    if get_origin(py_type) == Union:
         # Optional[type] aliases to Union[type, None]
         # Mypy has incomplete types here
-        args: List[type] = py_type.__args__  # type: ignore
+        args: tuple = get_args(py_type)
         # args contains classes, not instances of them
         if len(args) == 2 and args[1] == type(None):  # noqa: E721
             return _to_db_type(args[0])[0], True  # Nullable type
