@@ -1,7 +1,7 @@
 """Table schema management tools."""
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, TypedDict, Union, get_origin, get_args
+from typing import Dict, Generic, List, Tuple, TypedDict, TypeVar, Union, get_origin, get_args
 
 
 class Column(TypedDict):
@@ -11,21 +11,38 @@ class Column(TypedDict):
     nullable: bool
 
 
-def create_column(name: str, py_type: type) -> Column:
+def create_column(name: str, py_type: object) -> Column:
     """Creates a database column from Python type."""
     db_type, nullable = _to_db_type(py_type)
     return {'name': name, 'db_type': db_type, 'nullable': nullable}
 
 
-def _to_db_type(py_type: type) -> Tuple[str, bool]:
+T = TypeVar('T')
+
+
+class _ForeignMarker(Generic[T]):
+    """Marker for Foreign union in entity.py."""
+    pass
+
+
+Foreign = Union[int, _ForeignMarker[T]]
+
+
+def _to_db_type(py_type: object) -> Tuple[str, bool]:
     """Maps a Python type to database type name."""
-    if get_origin(py_type) == Union:
-        # Optional[type] aliases to Union[type, None]
-        # Mypy has incomplete types here
+    if get_origin(py_type) == Union:  # Optional or foreign key
         args: tuple = get_args(py_type)
         # args contains classes, not instances of them
+        # _ForeignMarker comparison is also broken (TODO figure why), fall back to name equality
         if len(args) == 2 and args[1] == type(None):  # noqa: E721
+            # Optional[type] aliases to Union[type, None]
             return _to_db_type(args[0])[0], True  # Nullable type
+        elif len(args) == 2 and args[1].__origin__ == _ForeignMarker:
+            # Foreign[entity_type] aliases to Union[int, _ForeignMarker[Entity]]
+            # int is needed to support assigning ids to the type
+            # _ForeignMarker contains referenced type (and marks for us)
+            ref_table = new_table_name(get_args(args[1])[0])
+            return f'integer REFERENCES {ref_table}(id)', False
         else:
             raise TypeError(f"unsupported union type {py_type}")
     elif py_type == bool:
@@ -44,6 +61,10 @@ class TableSchema(TypedDict):
     """A database table schema."""
     name: str
     columns: List[Column]
+
+
+def new_table_name(py_type: type) -> str:
+    return 'tinymud_' + py_type.__name__.lower()
 
 
 def new_table_schema(table_name: str, fields: Dict[str, type]) -> TableSchema:

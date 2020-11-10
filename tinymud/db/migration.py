@@ -74,7 +74,7 @@ class TableMigrator:
         # Initialize migration level (so that it can be altered in future)
         await self.conn.execute('INSERT INTO tinymud_migrations (table_name, level) VALUES ($1, $2)', table['name'], 0)
 
-    async def create_sys_tables(self):
+    async def create_sys_tables(self) -> None:
         """Creates system tables in database.
 
         Call this before attempting to migrate anything. This is safe even if

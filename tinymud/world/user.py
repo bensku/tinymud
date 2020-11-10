@@ -2,9 +2,10 @@
 
 import argon2
 
-from tinymud.db.entity import Entity
+from tinymud.db.entity import Entity, entity
 
 
+@entity
 class User(Entity):
     """Tinymud user.
 

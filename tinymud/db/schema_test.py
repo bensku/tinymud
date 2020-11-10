@@ -1,10 +1,10 @@
 import textwrap
-from typing import Optional
+from typing import Optional, get_type_hints
 
 import tinymud.db.schema as schema
 
 
-def test_column():
+def test_column() -> None:
     required = schema.create_column('required', int)
     assert required['name'] == 'required'
     assert required['db_type'] == 'integer'
@@ -15,15 +15,26 @@ def test_column():
     assert optional['nullable'] is True
 
 
-sample_fields = {
-    'id': int,
-    'name': str,
-    'weight': Optional[float],
-    'flag': bool
-}
+class DummyType:
+    pass
 
 
-def test_table_schema():
+class SampleClass:
+    id: int
+    name: str
+    weight: Optional[float]
+    flag: bool
+    table_ref: schema.Foreign[DummyType]
+
+
+# Specifying Foreign[type] in dict does not pass type check
+# Real-world use-case works, but still... TODO investigate
+sample_fields = {}
+for name, field_type in get_type_hints(SampleClass).items():
+    sample_fields[name] = field_type
+
+
+def test_table_schema() -> None:
     fields = sample_fields
     table = schema.new_table_schema('table', fields)
     assert table['name'] == 'table'
@@ -36,18 +47,19 @@ def test_table_schema():
         assert expected['nullable'] == column['nullable']
 
 
-def test_create_table():
+def test_create_table() -> None:
     stmt = schema.get_create_table(schema.new_table_schema('FooTable', sample_fields))
     expected = textwrap.dedent("""    CREATE TABLE FooTable (
     id integer NOT NULL,
     flag boolean NOT NULL,
     name text NOT NULL,
+    table_ref integer REFERENCES tinymud_dummytype(id) NOT NULL,
     weight double precision
     )""")
     assert stmt == expected
 
 
-def test_schema_update():
+def test_schema_update() -> None:
     old_fields = sample_fields
     new_fields = {
         'id': int,
@@ -56,7 +68,7 @@ def test_schema_update():
         'new_field': str
     }
     old_schema = schema.new_table_schema('FooTable', old_fields)
-    new_schema, alter_reqs = schema.update_table_schema(old_schema, new_fields)
+    new_schema, alter_reqs = schema.update_table_schema(old_schema, new_fields)  # type: ignore
 
     # Is the new schema correct?
     expected = textwrap.dedent("""    CREATE TABLE FooTable (
@@ -69,7 +81,8 @@ def test_schema_update():
 
     # Are ALTER requests able to change table to it?
     assert alter_reqs[0].sql == ['ALTER TABLE FooTable DROP COLUMN name']
-    assert alter_reqs[1].sql == [
+    assert alter_reqs[1].sql == ['ALTER TABLE FooTable DROP COLUMN table_ref']
+    assert alter_reqs[2].sql == [
         'ALTER TABLE FooTable ADD COLUMN new_field text',
         'UPDATE FooTable SET new_field = $existing_value$',
         'ALTER TABLE FooTable ALTER COLUMN new_field SET NOT NULL'

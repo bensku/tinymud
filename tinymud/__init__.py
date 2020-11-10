@@ -12,7 +12,7 @@ from tinymud.db.entity import init_entity_system
 
 
 async def start(db_url: str, game_path: Path, prod_mode: bool, save_interval: int,
-        host: str, port: int):
+        host: str, port: int) -> None:
     # Wait until database is up
     # This is especially relevant for development Docker database
     while True:

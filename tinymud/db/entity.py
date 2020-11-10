@@ -1,7 +1,7 @@
 
 import asyncio
 from pathlib import Path
-from typing import Dict, List, Type, Set, TypeVar, Optional, get_type_hints
+from typing import Dict, List, Optional, Type, Set, TypeVar, get_type_hints
 from weakref import WeakValueDictionary
 
 from asyncpg import Connection, Record
@@ -170,7 +170,7 @@ def entity(entity_type: Type[T]) -> Type[T]:
             if name in fields:
                 pass  # TODO error
             fields[name] = field_type
-    table = schema.new_table_schema('tinymud_' + entity_type.__name__.lower(), fields)
+    table = schema.new_table_schema(schema.new_table_name(entity_type), fields)
     entity_type._schema = table
 
     # Figure out CREATE TABLE, INSERT, SELECT, UPDATE and DELETE

@@ -7,6 +7,7 @@ from multiprocessing import Process
 from pathlib import Path
 import signal
 import sys
+from typing import Any
 
 
 class FileSet(Enum):
@@ -19,11 +20,11 @@ class FileSet(Enum):
     GAME = 'game'
     CORE = 'core'
 
-    def __str(self):
+    def __str(self) -> str:
         return self.value
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Tinymud launcher")
     parser.add_argument('game', help="Path to Tinymud game")
     parser.add_argument('--db', help="Connect to this PostgreSQL database.")
@@ -40,7 +41,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def launch_dev_db():
+def launch_dev_db() -> Any:
     """Launcher empty database in Postgres."""
     import docker
     client = docker.from_env()
@@ -58,15 +59,15 @@ def import_for_fork(reloadable: FileSet) -> None:
     pass  # TODO implement more :)
 
 
-def watch_files(reloadable: FileSet, game_path: Path):
+def watch_files(reloadable: FileSet, game_path: Path) -> Any:
     if reloadable == FileSet.NONE:
         return None  # Nothing to watch
     from watchdog.observers import Observer
-    from watchdog.events import FileSystemEventHandler
+    from watchdog.events import FileSystemEvent, FileSystemEventHandler
 
     # Reloads everything whenever anything changes
     class ReloadingEventHandler(FileSystemEventHandler):
-        def on_any_event(self, event):
+        def on_any_event(self, event: FileSystemEvent) -> None:
             print("Live-reloading...")
             stop_tinymud(True)
             # Main will restart subprocess, because no SIGINT was received
@@ -95,7 +96,7 @@ _restart_flag: bool = True  # True if starting for first time or restarting
 _observer = None  # Observer for --watch, if watching any files
 
 
-def _mudproc_entrypoint():
+def _mudproc_entrypoint() -> None:
     if _observer:  # Let launcher process handle restarting
         _observer.stop()
 
@@ -112,14 +113,14 @@ def _mudproc_entrypoint():
     loop.run_forever()
 
 
-def launch_tinymud():
+def launch_tinymud() -> None:
     global _mud_proc
     _mud_proc = Process(target=_mudproc_entrypoint)
     _mud_proc.start()
     _mud_proc.join()
 
 
-def stop_tinymud(restart=False):
+def stop_tinymud(restart: bool = False) -> None:
     if restart:
         global _restart_flag
         _restart_flag = True  # Don't quit, but restart instead
