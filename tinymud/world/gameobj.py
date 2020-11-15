@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import inspect
 from typing import Dict, List, Optional, Tuple, Type
 
+from loguru import logger
+
 from tinymud.entity import Entity, Foreign, entity
 from .user import User
 
@@ -68,6 +70,8 @@ async def init_obj_system() -> None:
         if not record:  # New type, add to database table
             record = _TypeMapping(obj_type.id_str)
         _obj_types[record.id] = obj_type
+
+    logger.debug(f"Found {len(_register_queue)} GameObj types")
 
 
 @entity

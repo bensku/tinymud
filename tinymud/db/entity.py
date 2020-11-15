@@ -6,6 +6,7 @@ from weakref import WeakValueDictionary
 
 from asyncpg import Connection, Record
 from asyncpg.pool import Pool
+from loguru import logger
 
 from .migration import TableMigrator
 import tinymud.db.schema as schema
@@ -223,7 +224,7 @@ _async_init_needed: Set[Type[Entity]] = set()
 
 async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool):
     """Performs late/async initialization on entities."""
-    print("Initializing entity types...")
+    logger.info("Initializing entity types...")
     migrator = TableMigrator(conn, db_data, prod_mode)
     await migrator.create_sys_tables()
 
@@ -234,13 +235,15 @@ async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool)
     # Create and migrate tables (+ their post create triggers)
     created_count = await migrator.create_tables()
     if created_count > 0:
-        print(f"Created {created_count} tables")
+        logger.info(f"Created {created_count} tables")
     migrated_count = await migrator.migrate_tables()
     if migrated_count > 0:
-        print(f"Migrated {migrated_count} existing tables")
+        logger.info(f"Migrated {migrated_count} existing tables")
     post_count = await migrator.exec_post_create()
     if post_count > 0:
-        print(f"Executed {post_count} post create statements")
+        logger.info(f"Executed {post_count} post create statements")
+
+    logger.debug(f"Found {len(_async_init_needed)} entity types")
 
     # Figure out and assign next free ids
     for entity_type in _async_init_needed:

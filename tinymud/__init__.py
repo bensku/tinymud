@@ -4,13 +4,12 @@ import asyncio
 from pathlib import Path
 
 import asyncpg
+from loguru import logger
 
 from tinymud.api.app import run_app
 from tinymud.db.entity import init_entity_system
 
 from tinymud.world.gameobj import init_obj_system
-
-# conn_pool: Pool = await create_pool(database)
 
 
 async def start(db_url: str, game_path: Path, prod_mode: bool, save_interval: int,
@@ -23,17 +22,18 @@ async def start(db_url: str, game_path: Path, prod_mode: bool, save_interval: in
             await conn.close()
             break
         except asyncpg.exceptions.ConnectionDoesNotExistError:
-            print("Waiting for database...")
+            logger.info("Waiting for database...")
             await asyncio.sleep(2)
 
     # Start entity system
     conn_pool = await asyncpg.create_pool(db_url)
-    print("Connected to database, starting entity system")
+    logger.info("Connected to database, starting entity system")
     await init_entity_system(conn_pool, Path('db_data').absolute(), prod_mode, save_interval)
-    print("Entity system initialized")
+    logger.info("Entity system initialized")
 
     await init_obj_system()
-    print("Game object system initialized")
+    logger.info("Game object system initialized")
 
     # Run Sanic-based web application
     await run_app(host, port)
+    logger.info(f"Tinymud listening at {host}:{port}")

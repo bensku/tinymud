@@ -9,6 +9,8 @@ import signal
 import sys
 from typing import Any
 
+from loguru import logger
+
 
 class FileSet(Enum):
     """Set of game, Tinymud and dependency sources.
@@ -131,7 +133,7 @@ if __name__ == '__main__':
     args = parse_args()
 
     if args.dev_db:  # Launch development database and connect to it
-        print("Using Docker to start development database")
+        logger.info("Using Docker to start development database")
         _dev_db = launch_dev_db()
         _db_url = 'postgres://postgres:localdevonly@localhost:23123/tinymud'
     else:  # Connect to externally managed (prod?) PostgreSQL
@@ -168,5 +170,5 @@ if __name__ == '__main__':
 
     # Clean up once _quit_received is set
     if _dev_db:  # Stop development DB if it exists
-        print("Killing development database")
+        logger.info("Killing development database")
         _dev_db.kill()

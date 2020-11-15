@@ -18,6 +18,7 @@ pyjwt = "*"
 pydantic = "*"
 argon2-cffi = "*"
 aiohttp = {extras = ["speedups"], version = "*"}
+loguru = "*"
 
 [requires]
 python_version = "3.9"
