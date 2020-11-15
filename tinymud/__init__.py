@@ -8,6 +8,8 @@ import asyncpg
 from tinymud.api.app import run_app
 from tinymud.db.entity import init_entity_system
 
+from tinymud.world.gameobj import init_obj_system
+
 # conn_pool: Pool = await create_pool(database)
 
 
@@ -29,6 +31,9 @@ async def start(db_url: str, game_path: Path, prod_mode: bool, save_interval: in
     print("Connected to database, starting entity system")
     await init_entity_system(conn_pool, Path('db_data').absolute(), prod_mode, save_interval)
     print("Entity system initialized")
+
+    await init_obj_system()
+    print("Game object system initialized")
 
     # Run Sanic-based web application
     await run_app(host, port)

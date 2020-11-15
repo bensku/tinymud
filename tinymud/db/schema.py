@@ -1,20 +1,19 @@
 """Table schema management tools."""
 
 from dataclasses import dataclass, field
-from typing import Dict, Generic, List, Tuple, TypedDict, TypeVar, Union, get_origin, get_args
+from typing import Dict, Generic, List, Optional, Tuple, TypedDict, TypeVar, Union, get_origin, get_args
 
 
 class Column(TypedDict):
     """A database table column."""
     name: str
-    db_type: str
-    nullable: bool
+    db_type: 'DbType'
 
 
 def create_column(name: str, py_type: object) -> Column:
     """Creates a database column from Python type."""
-    db_type, nullable = _to_db_type(py_type)
-    return {'name': name, 'db_type': db_type, 'nullable': nullable}
+    db_type = _to_db_type(py_type)
+    return {'name': name, 'db_type': db_type}
 
 
 T = TypeVar('T')
@@ -28,31 +27,49 @@ class _ForeignMarker(Generic[T]):
 Foreign = Union[int, _ForeignMarker[T]]
 
 
-def _to_db_type(py_type: object) -> Tuple[str, bool]:
+class DbType(TypedDict):
+    """Database type."""
+    name: str
+    nullable: bool
+    foreign_key: Optional[str]
+
+
+def _new_db_type(name: str, nullable: bool = False, foreign_key: Optional[str] = None) -> DbType:
+    return {'name': name, 'nullable': nullable, 'foreign_key': foreign_key}
+
+
+def _to_db_type(py_type: object) -> DbType:
     """Maps a Python type to database type name."""
     if get_origin(py_type) == Union:  # Optional or foreign key
-        args: tuple = get_args(py_type)
-        # args contains classes, not instances of them
-        # _ForeignMarker comparison is also broken (TODO figure why), fall back to name equality
-        if len(args) == 2 and args[1] == type(None):  # noqa: E721
+        args: tuple = get_args(py_type)  # Contains classes, not instances of them
+        nullable = type(None) in args
+        nonnull_count = len(args)
+        if nullable:
+            nonnull_count -= 1
+
+        if nullable and len(args) == 2:
             # Optional[type] aliases to Union[type, None]
-            return _to_db_type(args[0])[0], True  # Nullable type
-        elif len(args) == 2 and args[1].__origin__ == _ForeignMarker:
+            db_type = _to_db_type(args[0])
+            db_type['nullable'] = True  # Make type nullable
+            return db_type
+        elif nonnull_count == 2 and args[1].__origin__ == _ForeignMarker:
             # Foreign[entity_type] aliases to Union[int, _ForeignMarker[Entity]]
+            # Nullable[Foreign[entity_type]] also aliases to very similar
+            # Union[int, _ForeignMarker[Entity], None]
             # int is needed to support assigning ids to the type
             # _ForeignMarker contains referenced type (and marks for us)
             ref_table = new_table_name(get_args(args[1])[0])
-            return f'integer REFERENCES {ref_table}(id)', False
+            return _new_db_type('integer', nullable, ref_table)
         else:
             raise TypeError(f"unsupported union type {py_type}")
     elif py_type == bool:
-        return 'boolean', False
+        return _new_db_type('boolean')
     elif py_type == int:
-        return 'integer', False
+        return _new_db_type('integer')
     elif py_type == float:
-        return 'double precision', False
+        return _new_db_type('double precision')
     elif py_type == str:
-        return 'text', False
+        return _new_db_type('text')
     else:
         raise TypeError(f"unsupported type {py_type}")
 
@@ -70,8 +87,6 @@ def new_table_name(py_type: type) -> str:
 def new_table_schema(table_name: str, fields: Dict[str, type]) -> TableSchema:
     """Creates a new table schema from class fields."""
     columns: List[Column] = []
-    # Id (primary key) always first
-    columns.append(create_column('id', fields['id']))
 
     # Rest of columns in alphabetical order
     for name in sorted(fields.keys()):
@@ -82,16 +97,37 @@ def new_table_schema(table_name: str, fields: Dict[str, type]) -> TableSchema:
 
 def get_create_table(table: TableSchema) -> str:
     """Gets CREATE TABLE statement for given table."""
-    # Column creation rules
-    col_rows = []
+    # Column creation rules (id is special)
+    col_rows = ['id integer PRIMARY KEY']
     for column in table['columns']:
-        row = f'{column["name"]} {column["db_type"]}'
-        if not column['nullable']:
+        db_type = column['db_type']
+        row = f'{column["name"]} {db_type["name"]}'
+        if not db_type['nullable']:
             row += ' NOT NULL'
         col_rows.append(row)
 
     cols_str = ',\n'.join(col_rows)
     return f'CREATE TABLE {table["name"]} (\n{cols_str}\n)'
+
+
+def get_post_create(table: TableSchema) -> List[str]:
+    """Gets statements to execute after all tables have been created.
+
+    Foreign keys introduce (potentially circular) dependencies to empty tables,
+    which makes creating them difficult. It is much easier to just ALTER TABLE
+    the constraints in place afterwards.
+    """
+    sql = []
+    name = table['name']
+    for column in table['columns']:
+        db_type = column['db_type']
+        if 'foreign_key' in db_type and db_type['foreign_key']:
+            colname = column["name"]
+            sql.append(f'ALTER TABLE {name} DROP CONSTRAINT IF EXISTS fk_{colname}')
+            sql.append((f'ALTER TABLE {name} ADD CONSTRAINT fk_{colname}'
+                f' FOREIGN KEY ({colname})'
+                f' REFERENCES {db_type["foreign_key"]}(id)'))
+    return sql
 
 
 @dataclass
@@ -135,8 +171,9 @@ def update_table_schema(old_schema: TableSchema, fields: Dict[str, type]) -> Tup
             new_columns.append(column)
 
             # SQL to add a new column for non-null columns is not one-liner
-            sql = [f'ALTER TABLE {table_name} ADD COLUMN {name} {column["db_type"]}']
-            if column['nullable']:
+            db_type = column['db_type']
+            sql = [f'ALTER TABLE {table_name} ADD COLUMN {name} {db_type["name"]}']
+            if db_type['nullable']:
                 alter_requests.append(AlterRequest(f"add nullable column {name}", sql))
             else:
                 # These queries are written to SQL scripts, thus we can't use prepared statements

@@ -29,7 +29,6 @@ class Entity:
 
     # Table schema and SQL queries
     _schema: TableSchema
-    _sql_create_table: str
     _sql_insert: str
     _sql_select: str
     _sql_update: str
@@ -174,7 +173,6 @@ def entity(entity_type: Type[T]) -> Type[T]:
     entity_type._schema = table
 
     # Figure out CREATE TABLE, INSERT, SELECT, UPDATE and DELETE
-    entity_type._sql_create_table = schema.get_create_table(table)
     entity_type._sql_insert = schema.get_sql_insert(table)
     entity_type._sql_select = schema.get_sql_select(table['name'])
     entity_type._sql_update = schema.get_sql_update(table)
@@ -225,15 +223,30 @@ _async_init_needed: Set[Type[Entity]] = set()
 
 async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool):
     """Performs late/async initialization on entities."""
+    print("Initializing entity types...")
     migrator = TableMigrator(conn, db_data, prod_mode)
     await migrator.create_sys_tables()
-    for entity_type in _async_init_needed:
-        # Ensure that the DB table exists and matches Python class
-        table_schema = entity_type._schema
-        await migrator.migrate_table(table_schema)
 
-        # Figure out and inject next free id
-        entity_type._next_id = await conn.fetchval(f'SELECT COUNT(*) FROM {table_schema["name"]}')
+    # Queue tables to be created, migrated etc.
+    for entity_type in _async_init_needed:
+        await migrator.add_table(entity_type._schema)
+
+    # Create and migrate tables (+ their post create triggers)
+    created_count = await migrator.create_tables()
+    if created_count > 0:
+        print(f"Created {created_count} tables")
+    migrated_count = await migrator.migrate_tables()
+    if migrated_count > 0:
+        print(f"Migrated {migrated_count} existing tables")
+    post_count = await migrator.exec_post_create()
+    if post_count > 0:
+        print(f"Executed {post_count} post create statements")
+
+    # Figure out and assign next free ids
+    for entity_type in _async_init_needed:
+        table_schema = entity_type._schema
+        current_id = await conn.fetchval(f'SELECT max(id) FROM {table_schema["name"]}')
+        entity_type._next_id = current_id + 1 if current_id else 0
 
 
 async def _save_entities_timer(interval: float) -> None:

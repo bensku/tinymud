@@ -7,12 +7,10 @@ import tinymud.db.schema as schema
 def test_column() -> None:
     required = schema.create_column('required', int)
     assert required['name'] == 'required'
-    assert required['db_type'] == 'integer'
-    assert required['nullable'] is False
+    assert required['db_type'] == {'name': 'integer', 'nullable': False, 'foreign_key': None}
 
     optional = schema.create_column('optional', Optional[int])
-    assert optional['db_type'] == 'integer'
-    assert optional['nullable'] is True
+    assert optional['db_type'] == {'name': 'integer', 'nullable': True, 'foreign_key': None}
 
 
 class DummyType:
@@ -44,7 +42,6 @@ def test_table_schema() -> None:
         py_type = fields[column['name']]
         expected = schema.create_column('_', py_type)
         assert expected['db_type'] == column['db_type']
-        assert expected['nullable'] == column['nullable']
 
 
 def test_create_table() -> None:
@@ -53,10 +50,15 @@ def test_create_table() -> None:
     id integer NOT NULL,
     flag boolean NOT NULL,
     name text NOT NULL,
-    table_ref integer REFERENCES tinymud_dummytype(id) NOT NULL,
+    table_ref integer NOT NULL,
     weight double precision
     )""")
     assert stmt == expected
+
+
+def test_post_create() -> None:
+    stmt = schema.get_post_create(schema.new_table_schema('FooTable', sample_fields))
+    assert stmt == ['ALTER TABLE FooTable ADD FOREIGN KEY (table_ref) REFERENCES tinymud_dummytype(id)']
 
 
 def test_schema_update() -> None:
