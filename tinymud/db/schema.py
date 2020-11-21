@@ -1,7 +1,7 @@
 """Table schema management tools."""
 
 from dataclasses import dataclass, field
-from typing import Dict, Generic, List, Optional, Tuple, TypedDict, TypeVar, Union, get_origin, get_args
+from typing import Dict, ForwardRef, Generic, List, Optional, Tuple, TypedDict, TypeVar, Union, get_origin, get_args
 
 
 class Column(TypedDict):
@@ -41,7 +41,7 @@ def _new_db_type(name: str, nullable: bool = False, foreign_key: Optional[str] =
 def _to_db_type(py_type: object) -> DbType:
     """Maps a Python type to database type name."""
     if get_origin(py_type) == Union:  # Optional or foreign key
-        args: tuple = get_args(py_type)  # Contains classes, not instances of them
+        args = get_args(py_type)  # Contains classes, not instances of them
         nullable = type(None) in args
         nonnull_count = len(args)
         if nullable:
@@ -81,6 +81,8 @@ class TableSchema(TypedDict):
 
 
 def new_table_name(py_type: type) -> str:
+    if isinstance(py_type, ForwardRef):
+        return 'tinymud_' + py_type.__forward_arg__.lower()
     return 'tinymud_' + py_type.__name__.lower()
 
 

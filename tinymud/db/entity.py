@@ -1,7 +1,8 @@
 
+#from __future__ import annotations
 import asyncio
 from pathlib import Path
-from typing import Dict, List, Optional, Type, Set, TypeVar, get_type_hints
+from typing import Any, Dict, List, Optional, Tuple, Type, Set, TypeVar, cast, get_type_hints
 from weakref import WeakValueDictionary
 
 from asyncpg import Connection, Record
@@ -41,14 +42,14 @@ class Entity:
     # Cache to avoid querying out-of-date entities from database
     # As long as change queue (or some other cache) holds the entity,
     # this will keep it too
-    _cache: WeakValueDictionary
+    _cache: WeakValueDictionary[int, 'Entity']
 
     @classmethod
     async def get(cls: Type[T], id: int) -> Optional[T]:
         """Gets an entity by id."""
-        cache: WeakValueDictionary = cls._cache
+        cache: WeakValueDictionary[int, Entity] = cls._cache
         if id in cache:  # Check if our cache has it
-            return cache[id]
+            return cast(T, cache[id])
         query = cls._sql_select + ' WHERE id = $1'
         record = await _entity_conn.fetchrow(query, id)
         return _record_to_obj(cls, record) if record else None
@@ -58,12 +59,20 @@ class Entity:
         return cls._field_names  # type: ignore
 
     @classmethod
-    async def select_many(cls: Type[T], *args) -> List[T]:
+    async def select_many(cls: Type[T], *args: bool) -> List[T]:
+        # args type is fake, FIXME if possible
+        # FIXME we need to select from cache first, because otherwise changes pending
+        # flush would not affect results of this SELECT
+
         # Generate WHERE clauses and associate values with them
         clauses = []
         values = []
         for arg in args:
-            (entity, field, value, sql_op) = arg
+            entity: Type[Entity]
+            field: str
+            value: Any
+            sql_op: str
+            entity, field, value, sql_op = arg  # type: ignore
             if cls != entity:
                 raise ValueError('tried to select(...) with fields from different entity')
             # field and sql_op are trusted; they never come in as user input
@@ -77,19 +86,18 @@ class Entity:
         # Replace some records with entities from cache
         # (DB may have entities missing from cache, so we need to query them anyway)
         async with _conn_pool.acquire() as conn:
-            cache: WeakValueDictionary = cls._cache
+            cache: WeakValueDictionary[int, Entity] = cls._cache
             entities = []
             for record in conn.fetch(query, *values):
                 entity_id = record[0]
                 if entity_id in cache:  # Use cached entity if possible
                     entities.append(cache[entity_id])
                 else:  # Not found, actually convert record to entity
-                    entity = _record_to_obj(cls, record)
-                    entities.append(entity)
-            return entities
+                    entities.append(_record_to_obj(cls, record))
+            return cast(List[T], entities)
 
     @classmethod
-    async def select(cls: Type[T], *args) -> Optional[T]:
+    async def select(cls: Type[T], *args: bool) -> Optional[T]:
         # TODO add own implementation, select_many() CAN be very slow
         results = await cls.select_many(*args)
         return results[0] if len(results) > 0 else None
@@ -102,7 +110,7 @@ def _record_to_obj(py_type: Type[T], record: Record) -> T:
     return obj
 
 
-def _obj_to_values(obj: Entity, table: TableSchema) -> list:
+def _obj_to_values(obj: Entity, table: TableSchema) -> List[Any]:
     """Gets fields of an entity to as list"""
     values = []
     for column in table['columns']:
@@ -120,22 +128,22 @@ class OverloadedField:
         self.entity = entity
         self.field = field
 
-    def __lt__(self, other):
+    def __lt__(self, other: Any) -> Tuple[Type[Entity], str, Any, str]:
         return self.entity, self.field, other, '<'
 
-    def __le__(self, other):
+    def __le__(self, other: Any) -> Tuple[Type[Entity], str, Any, str]:
         return self.entity, self.field, other, '<='
 
-    def __eq__(self, other):
+    def __eq__(self, other: Any) -> Tuple[Type[Entity], str, Any, str]:  # type: ignore
         return self.entity, self.field, other, '='
 
-    def __ne__(self, other):
+    def __ne__(self, other: Any) -> Tuple[Type[Entity], str, Any, str]:  # type: ignore
         return self.entity, self.field, other, '!='
 
-    def __gt__(self, other):
+    def __gt__(self, other: Any) -> Tuple[Type[Entity], str, Any, str]:
         return self.entity, self.field, other, '>'
 
-    def __ge__(self, other):
+    def __ge__(self, other: Any) -> Tuple[Type[Entity], str, Any, str]:
         return self.entity, self.field, other, '>='
 
 
@@ -143,7 +151,7 @@ def entity(entity_type: Type[T]) -> Type[T]:
     # Patch init to set id and queue for _new_entities as needed
     old_init = entity_type.__init__
 
-    def new_init(self: T, **kwargs):
+    def new_init(self: T, **kwargs: Any) -> None:
         if 'id' in kwargs:  # Loaded from database
             self.id = kwargs['id']
             del kwargs['id']
@@ -160,39 +168,6 @@ def entity(entity_type: Type[T]) -> Type[T]:
         # Cache this entity to its type (weakly referenced)
         entity_type._cache[self.id] = self
     setattr(entity_type, '__init__', new_init)
-
-    # Figure out fields and create table schema based on them
-    fields: Dict[str, Type] = {}
-    for component in entity_type.mro():
-        if component == object:
-            continue  # Doesn't have anything interesting for us
-        for name, field_type in get_type_hints(component).items():
-            if name in fields:
-                pass  # TODO error
-            fields[name] = field_type
-    table = schema.new_table_schema(schema.new_table_name(entity_type), fields)
-    entity_type._schema = table
-
-    # Figure out CREATE TABLE, INSERT, SELECT, UPDATE and DELETE
-    entity_type._sql_insert = schema.get_sql_insert(table)
-    entity_type._sql_select = schema.get_sql_select(table['name'])
-    entity_type._sql_update = schema.get_sql_update(table)
-    entity_type._sql_delete = schema.get_sql_delete(table['name'])
-
-    # Populate field names used for query DSL (select and friends)
-    field_names: List[OverloadedField] = []
-    for name in fields.keys():
-        field_names.append(OverloadedField(entity_type, name))
-    entity_type._field_names = field_names
-
-    # Patch in change detection for fields
-    def mark_changed(self: T, key: str, value: str) -> None:
-        # Queue to be saved and prevent GC before that happens
-        _changed_entities.add(self)
-    setattr(entity_type, '__setattr__', mark_changed)
-
-    # Create entity cache for this type
-    entity_type._cache = WeakValueDictionary()
 
     # Queue for async init
     _async_init_needed.add(entity_type)
@@ -222,14 +197,47 @@ async def save_entities(conn: Connection) -> None:
 _async_init_needed: Set[Type[Entity]] = set()
 
 
-async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool):
+async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool) -> None:
     """Performs late/async initialization on entities."""
     logger.info("Initializing entity types...")
     migrator = TableMigrator(conn, db_data, prod_mode)
     await migrator.create_sys_tables()
 
-    # Queue tables to be created, migrated etc.
+    # Execute async/late init
+    # Some tasks need accurate type information, and cannot be performed
+    # earlier due to circular dependencies
+    # Others are async, and cannot be waited on in the decorator
     for entity_type in _async_init_needed:
+        # Figure out fields and create table schema based on them
+        fields: Dict[str, Type[Any]] = {}
+        for component in entity_type.mro():
+            if component == object:
+                continue  # Doesn't have anything interesting for us
+            for name, field_type in component.__annotations__.items():
+                if name in fields:
+                    pass  # TODO error
+                fields[name] = field_type
+        table = schema.new_table_schema(schema.new_table_name(entity_type), fields)
+        entity_type._schema = table
+
+        # Figure out CREATE TABLE, INSERT, SELECT, UPDATE and DELETE
+        entity_type._sql_insert = schema.get_sql_insert(table)
+        entity_type._sql_select = schema.get_sql_select(table['name'])
+        entity_type._sql_update = schema.get_sql_update(table)
+        entity_type._sql_delete = schema.get_sql_delete(table['name'])
+
+        # Populate field names used for query DSL (select and friends)
+        field_names: List[OverloadedField] = []
+        for name in fields.keys():
+            field_names.append(OverloadedField(entity_type, name))
+        entity_type._field_names = field_names
+
+        # Patch in change detection for fields
+        def mark_changed(self: T, key: str, value: str) -> None:
+            # Queue to be saved and prevent GC before that happens
+            _changed_entities.add(self)
+        setattr(entity_type, '__setattr__', mark_changed)
+        # Queue table to be created/migrated
         await migrator.add_table(entity_type._schema)
 
     # Create and migrate tables (+ their post create triggers)
@@ -243,7 +251,7 @@ async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool)
     if post_count > 0:
         logger.info(f"Executed {post_count} post create statements")
 
-    logger.debug(f"Found {len(_async_init_needed)} entity types")
+    logger.info(f"Found {len(_async_init_needed)} entity types")
 
     # Figure out and assign next free ids
     for entity_type in _async_init_needed:

@@ -28,7 +28,9 @@ class TableMigrator:
 
         Returns current migration level (integer) for existing tables and None
         for those that have not yet been created."""
-        return await self.conn.fetchval('SELECT level FROM tinymud_migrations WHERE table_name = $1', table)
+        level = await self.conn.fetchval('SELECT level FROM tinymud_migrations WHERE table_name = $1', table)
+        assert level is None or isinstance(level, int)
+        return level
 
     async def _set_migration_level(self, table: str, level: int) -> None:
         """Sets current migration level of a table."""
@@ -45,7 +47,8 @@ class TableMigrator:
         try:
             with open(self.schemas / table['name'] + '.json', 'r') as f:
                 disk_schema = json.load(f)
-                return table == disk_schema  # Compare schema content
+                # Compare schema content
+                return table == disk_schema  # type: ignore
         except FileNotFoundError:
             return False  # No schema found!
 

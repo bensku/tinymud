@@ -10,6 +10,7 @@ from tinymud.api.app import run_app
 from tinymud.db.entity import init_entity_system
 
 from tinymud.world.gameobj import init_obj_system
+from tinymud.world.place import start_places_tick
 
 
 async def start(db_url: str, game_path: Path, prod_mode: bool, save_interval: int,
@@ -29,10 +30,9 @@ async def start(db_url: str, game_path: Path, prod_mode: bool, save_interval: in
     conn_pool = await asyncpg.create_pool(db_url)
     logger.info("Connected to database, starting entity system")
     await init_entity_system(conn_pool, Path('db_data').absolute(), prod_mode, save_interval)
-    logger.info("Entity system initialized")
 
     await init_obj_system()
-    logger.info("Game object system initialized")
+    await start_places_tick(0.2)  # TODO configurable tick rate
 
     # Run Sanic-based web application
     await run_app(host, port)

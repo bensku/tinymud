@@ -7,7 +7,6 @@ from typing import Dict, List, Optional, Tuple, Type
 from loguru import logger
 
 from tinymud.entity import Entity, Foreign, entity
-from .user import User
 
 
 @dataclass
@@ -71,7 +70,7 @@ async def init_obj_system() -> None:
             record = _TypeMapping(obj_type.id_str)
         _obj_types[record.id] = obj_type
 
-    logger.debug(f"Found {len(_register_queue)} GameObj types")
+    logger.info(f"Found {len(_register_queue)} GameObj types")
 
 
 @entity
@@ -95,35 +94,3 @@ class Placeable(Entity):
 @dataclass
 class Carriable(Entity):
     owner: Optional[Foreign['Character']]
-
-
-# Avoid circular imports by declaring certain core entity types
-
-
-@entity
-@dataclass
-class Place(Entity):
-    """A place in the world.
-
-    Each place has an unique address (str) in addition to numeric. The
-    addresses are used mostly in content creation tools. Players are usually
-    shown titles instead of room addresses, but both should be considered
-    public knowledge.
-
-    Header text is in markdown-like format (TODO) that is rendered to
-    HTML by client.
-    """
-    address: str
-    title: str
-    header: str
-
-
-@entity
-@dataclass
-class Character(GameObj, Placeable):
-    """A character in the world.
-
-    A character owned by an user is considered to be a player character.
-    All other characters are known as NPCs internally.
-    """
-    owner: Optional[Foreign[User]]

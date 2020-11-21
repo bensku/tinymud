@@ -22,8 +22,8 @@ class FileSet(Enum):
     GAME = 'game'
     CORE = 'core'
 
-    def __str(self) -> str:
-        return self.value
+    def __str__(self) -> str:
+        return self.value  # type: ignore
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,7 +68,7 @@ def watch_files(reloadable: FileSet, game_path: Path) -> Any:
     from watchdog.events import FileSystemEvent, FileSystemEventHandler
 
     # Reloads everything whenever anything changes
-    class ReloadingEventHandler(FileSystemEventHandler):
+    class ReloadingEventHandler(FileSystemEventHandler):  # type: ignore
         def on_any_event(self, event: FileSystemEvent) -> None:
             print("Live-reloading...")
             stop_tinymud(True)
