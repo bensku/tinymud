@@ -26,7 +26,7 @@ class LoginRequest(BaseModel):
 
 
 @routes.post('/login')
-async def login(request: Request):
+async def login(request: Request) -> Response:
     details = LoginRequest(**await request.json())
     # Will throw if credentials are not valid
     user = await validate_credentials(details.name, details.password)

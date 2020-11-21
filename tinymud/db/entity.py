@@ -1,8 +1,8 @@
+"""Tinymud entity system."""
 
-#from __future__ import annotations
 import asyncio
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Type, Set, TypeVar, cast, get_type_hints
+from typing import Any, Dict, List, Optional, Tuple, Type, Set, TypeVar, cast
 from weakref import WeakValueDictionary
 
 from asyncpg import Connection, Record
@@ -43,6 +43,23 @@ class Entity:
     # As long as change queue (or some other cache) holds the entity,
     # this will keep it too
     _cache: WeakValueDictionary[int, 'Entity']
+
+    def __entity_created__(self) -> None:
+        """Called when this entity is created.
+
+        Note that this being loaded from database doesn't qualify. If you
+        want that, __post_init__ of dataclasses should do the trick.
+        """
+        pass
+
+    def __entity_destroyed__(self) -> None:
+        """Called when this entity is destroyed.
+
+        Note that only deletion from database counts as 'destruction' here.
+        Use __del__ if you want to be called every time an entity is unloaded.
+        """
+        # TODO implement entity destruction
+        pass
 
     @classmethod
     async def get(cls: Type[T], id: int) -> Optional[T]:
@@ -160,10 +177,16 @@ def entity(entity_type: Type[T]) -> Type[T]:
             entity_type._next_id += 1
             self.id = entity_type._next_id
             _new_entities.add(self)  # Queue to be saved
+            created_hook = True
 
         # Call old init to actually set fields
         # Also raises exceptions if there are extra values
         old_init(self, **kwargs)  # type: ignore
+
+        # Call entity create hook after its data has been populated
+        # by the original init
+        if created_hook:
+            self.__entity_created__()  # Call entity type hook
 
         # Cache this entity to its type (weakly referenced)
         entity_type._cache[self.id] = self
@@ -234,8 +257,9 @@ async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool)
 
         # Patch in change detection for fields
         def mark_changed(self: T, key: str, value: str) -> None:
-            # Queue to be saved and prevent GC before that happens
-            _changed_entities.add(self)
+            if not key.startswith('_'):  # Ignore non-DB fields
+                # Queue to be saved and prevent GC before that happens
+                _changed_entities.add(self)
         setattr(entity_type, '__setattr__', mark_changed)
         # Queue table to be created/migrated
         await migrator.add_table(entity_type._schema)

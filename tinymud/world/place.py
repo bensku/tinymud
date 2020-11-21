@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from enum import Flag, auto
 import time
 from typing import List, Set
 from weakref import ReferenceType, ref
@@ -25,6 +26,19 @@ class _CachedPlace:
     characters: Set[Character]
 
 
+class ChangeFlags(Flag):
+    """Changes at a place during one tick.
+
+    Change places are set when something (description, characters, items, etc.)
+    changes in a place. They're cleared at end of place ticks, and can be used
+    in on_tick handlers to e.g. decide which updates to send to clients.
+    """
+    DETAILS = auto()
+    PASSAGES = auto()
+    CHARACTERS = auto()
+    ITEMS = auto()
+
+
 @entity
 @dataclass
 class Place(Entity):
@@ -43,6 +57,7 @@ class Place(Entity):
     header: str
 
     _cache: _CachedPlace = field(init=False)
+    _changes: ChangeFlags = ChangeFlags(0)
 
     def __post_init__(self) -> None:
         # Create cache of this place
@@ -56,7 +71,7 @@ class Place(Entity):
     async def items(self) -> List[Item]:
         return await Item.select_many(Item.c().place == self.id)
 
-    async def characters(self) -> Set[Character]:
+    def characters(self) -> Set[Character]:
         return self._cache.characters
 
     async def on_tick(self, delta: float) -> None:
@@ -66,18 +81,21 @@ class Place(Entity):
         place ticks, in seconds. This is NOT necessarily same as time between
         this and previous tick (that may or may not have even occurred).
         """
+        for character in self.characters():
+            await character.on_tick(delta, self._changes)
 
     async def on_character_enter(self, character: Character) -> None:
         """Called when an character enters this place."""
         self._cache.characters.add(character)
+        self._changes |= ChangeFlags.CHARACTERS
 
     def on_character_exit(self, character: Character) -> None:
         """Called when an character exists this place."""
         self._cache.characters.remove(character)
+        self._changes |= ChangeFlags.CHARACTERS
 
 
 @entity
-@dataclass
 class Passage(GameObj, Placeable):
     """A passage from place to another.
 

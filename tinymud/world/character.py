@@ -7,7 +7,7 @@ from tinymud.entity import Foreign, entity
 from .gameobj import GameObj, Placeable
 if TYPE_CHECKING:
     from .item import Item
-    from .place import Place
+    from .place import ChangeFlags, Place
     from .user import Session, User
 
 
@@ -32,4 +32,14 @@ class Character(GameObj, Placeable):
 
         # If this has session (and connection, and user), tell them the new location
         if self._controller:
-            self._controller._place_changed(to_place)
+            self._controller.moved_place(to_place)
+
+    def on_tick(self, delta: float, place_changes: 'ChangeFlags') -> None:
+        """Called when a place ticks.
+
+        This is not called for characters that are not in any place, or whose
+        place is not loaded (for performance reasons).
+        """
+        # If current place has changed and we have a session, let the client know
+        if place_changes != 0 and self._controller:
+            self._controller.place_updated(place_changes)
