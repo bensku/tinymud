@@ -151,7 +151,7 @@ async def game_ws(request: Request) -> WebSocketResponse:
     # Receive messages and deal with them
     while True:
         msg = await ws.receive_json()
-        id = msg._id
+        id = msg._id    
 
 
     return ws

@@ -13,11 +13,9 @@ from .migration import TableMigrator
 import tinymud.db.schema as schema
 from .schema import TableSchema
 
-# Global connection pool; prefer _entity_conn for short operations
-_conn_pool: Pool
 
-# Connection that can be used for one-shot operations
-# Don't ever use this for transactions!
+# Connection to use for entity queries
+# This has a transaction always open, but committed every once a while
 _entity_conn: Connection
 
 
@@ -44,15 +42,17 @@ class Entity:
     # this will keep it too
     _cache: WeakValueDictionary[int, 'Entity']
 
-    def __entity_created__(self) -> None:
-        """Called when this entity is created.
+    async def __entity_created__(self) -> None:
+        """Called when this entity is created in database.
 
-        Note that this being loaded from database doesn't qualify. If you
-        want that, __post_init__ of dataclasses should do the trick.
+        This may take a while (few seconds at most) after the object has been
+        created. Note that being loaded from database doesn't qualify;
+        if you want that, __post_init__ of dataclasses should do the trick.
+        It also gets called immediately after constructor sychronously.
         """
         pass
 
-    def __entity_destroyed__(self) -> None:
+    async def __entity_destroyed__(self) -> None:
         """Called when this entity is destroyed.
 
         Note that only deletion from database counts as 'destruction' here.
@@ -78,8 +78,6 @@ class Entity:
     @classmethod
     async def select_many(cls: Type[T], *args: bool) -> List[T]:
         # args type is fake, FIXME if possible
-        # FIXME we need to select from cache first, because otherwise changes pending
-        # flush would not affect results of this SELECT
 
         # Generate WHERE clauses and associate values with them
         clauses = []
@@ -102,16 +100,15 @@ class Entity:
         # Query all matching from database
         # Replace some records with entities from cache
         # (DB may have entities missing from cache, so we need to query them anyway)
-        async with _conn_pool.acquire() as conn:
-            cache: WeakValueDictionary[int, Entity] = cls._cache
-            entities = []
-            for record in conn.fetch(query, *values):
-                entity_id = record[0]
-                if entity_id in cache:  # Use cached entity if possible
-                    entities.append(cache[entity_id])
-                else:  # Not found, actually convert record to entity
-                    entities.append(_record_to_obj(cls, record))
-            return cast(List[T], entities)
+        cache: WeakValueDictionary[int, Entity] = cls._cache
+        entities = []
+        for record in _entity_conn.fetch(query, *values):
+            entity_id = record[0]
+            if entity_id in cache:  # Use cached entity if possible
+                entities.append(cache[entity_id])
+            else:  # Not found, actually convert record to entity
+                entities.append(_record_to_obj(cls, record))
+        return cast(List[T], entities)
 
     @classmethod
     async def select(cls: Type[T], *args: bool) -> Optional[T]:
@@ -176,17 +173,11 @@ def entity(entity_type: Type[T]) -> Type[T]:
             # Take next id
             entity_type._next_id += 1
             self.id = entity_type._next_id
-            _new_entities.add(self)  # Queue to be saved
-            created_hook = True
+            _new_entities.put_nowait(self)
 
         # Call old init to actually set fields
         # Also raises exceptions if there are extra values
         old_init(self, **kwargs)  # type: ignore
-
-        # Call entity create hook after its data has been populated
-        # by the original init
-        if created_hook:
-            self.__entity_created__()  # Call entity type hook
 
         # Cache this entity to its type (weakly referenced)
         entity_type._cache[self.id] = self
@@ -197,24 +188,6 @@ def entity(entity_type: Type[T]) -> Type[T]:
 
     return entity_type
 
-
-# Newly created and changed entities that need to be saved to DB
-_new_entities: Set[Entity] = set()
-_changed_entities: Set[Entity] = set()
-
-
-async def save_entities(conn: Connection) -> None:
-    """Saves changed and newly created entities to DB."""
-    async with conn.transaction():
-        # INSERT newly created entities
-        for entity in _new_entities:
-            entity_type = type(entity)
-            await conn.execute(entity_type._sql_insert, _obj_to_values(entity, entity_type._schema))
-
-        # UPDATE changed entities
-        for entity in _changed_entities:
-            entity_type = type(entity)
-            await conn.execute(entity_type._sql_update, _obj_to_values(entity, entity_type._schema))
 
 # Classes decorated with entity need some data injected from async DB callbacks
 _async_init_needed: Set[Type[Entity]] = set()
@@ -259,7 +232,7 @@ async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool)
         def mark_changed(self: T, key: str, value: str) -> None:
             if not key.startswith('_'):  # Ignore non-DB fields
                 # Queue to be saved and prevent GC before that happens
-                _changed_entities.add(self)
+                _changed_entities.put_nowait(self)
         setattr(entity_type, '__setattr__', mark_changed)
         # Queue table to be created/migrated
         await migrator.add_table(entity_type._schema)
@@ -284,22 +257,44 @@ async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool)
         entity_type._next_id = current_id + 1 if current_id else 0
 
 
-async def _save_entities_timer(interval: float) -> None:
-    """Periodically saves entities."""
+# Newly created and changed entities that need to be saved to DB
+_new_entities: asyncio.Queue[Entity] = asyncio.Queue()
+_changed_entities: asyncio.Queue[Entity] = asyncio.Queue()
+
+
+async def _save_entities() -> None:
+    """Saves entities to DB as soon as they change."""
+    # UPDATE changed entities
     while True:
-        await asyncio.sleep(interval)
-        async with _conn_pool.acquire() as conn:
-            await save_entities(conn)
+        entity = await _changed_entities.get()  # Block until entity is available
+        entity_type = type(entity)
+        await _entity_conn.execute(entity_type._sql_update, _obj_to_values(entity, entity_type._schema))
+
+
+async def _create_entities() -> None:
+    """Creates entities in DB as soon as they've been init'd."""
+    # INSERT newly created entities
+    while True:
+        entity = await _new_entities.get()  # Block until entity is available
+        await entity.__entity_created__()  # Call on created hook here (it is async)
+        entity_type = type(entity)
+        await _entity_conn.execute(entity_type._sql_insert, _obj_to_values(entity, entity_type._schema))
+
+
+async def _rotate_transaction(interval: float) -> None:
+    """Commits and starts a new transaction periodically."""
+    while True:
+        logger.trace("Rotating transaction")
+        async with _entity_conn.transaction():
+            await asyncio.sleep(interval)
+            # TODO pause place tick and user interactions until we can commit
+    # TODO how does this work when server stops normally?
 
 
 async def init_entity_system(conn_pool: Pool, db_data: Path, prod_mode: bool, save_interval: float) -> None:
     # Reserve connection for 'one-shot' operations
     global _entity_conn
-    _entity_conn = conn_pool.acquire()
-
-    # Also make the pool available for... longer operations
-    global _conn_pool
-    _conn_pool = conn_pool
+    _entity_conn = await conn_pool.acquire()
 
     # Perform async initialization as needed for entities
     async with conn_pool.acquire() as conn:
@@ -308,4 +303,6 @@ async def init_entity_system(conn_pool: Pool, db_data: Path, prod_mode: bool, sa
     _async_init_needed.clear()
 
     # Periodically save newly created and modified entities
-    asyncio.create_task(_save_entities_timer(save_interval))
+    asyncio.create_task(_save_entities())
+    asyncio.create_task(_create_entities())
+    asyncio.create_task(_rotate_transaction(save_interval))

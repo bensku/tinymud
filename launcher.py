@@ -23,7 +23,7 @@ class FileSet(Enum):
     CORE = 'core'
 
     def __str__(self) -> str:
-        return self.value  # type: ignore
+        return self.value
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
         help="Watch file set for changes and reload it when they occur.")
     parser.add_argument('--prod', default=False, help="Enables production mode.")  # FIXME WIP
     parser.add_argument('--save-interval', default=30, type=float,
-        help="Sets the save interval (in seconds).")
+        help="Sets the database commit interval (in seconds).")
     parser.add_argument('--host', default='localhost', help="Application host.")
     parser.add_argument('--port', default=8080, help="Application port.")
 
@@ -68,7 +68,7 @@ def watch_files(reloadable: FileSet, game_path: Path) -> Any:
     from watchdog.events import FileSystemEvent, FileSystemEventHandler
 
     # Reloads everything whenever anything changes
-    class ReloadingEventHandler(FileSystemEventHandler):  # type: ignore
+    class ReloadingEventHandler(FileSystemEventHandler):
         def on_any_event(self, event: FileSystemEvent) -> None:
             print("Live-reloading...")
             stop_tinymud(True)
