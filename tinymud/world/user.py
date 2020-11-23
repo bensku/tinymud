@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import List
 
 import argon2
+from loguru import logger
 
 from tinymud.entity import Entity, entity
 from .character import Character
@@ -31,6 +32,7 @@ class InvalidCredentials(Exception):
 
 
 _hasher = argon2.PasswordHasher()
+_test_login = False
 
 
 async def validate_credentials(name: str, password: str) -> User:
@@ -41,7 +43,15 @@ async def validate_credentials(name: str, password: str) -> User:
     """
     user = await User.select(User.c().name == name)
     if not user:
-        raise InvalidCredentials()
+        if _test_login:  # Just create an user!
+            logger.info(f"Creating user {name} for test login")
+            user = User(name, _hasher.hash(password))
+        else:  # This is an error
+            raise InvalidCredentials()
+
+    if _test_login:
+        logger.warning(f"Skipping authentication for user {name}")
+        return user
 
     # Found user, check if passwords match
     try:
@@ -52,3 +62,13 @@ async def validate_credentials(name: str, password: str) -> User:
         raise InvalidCredentials()
 
     return user  # Everything passed, give caller the user
+
+
+def enable_test_login() -> None:
+    """Enables test logins.
+
+    This DISABLES authentication. Only ever use it in local development.
+    """
+    logger.warning("Authentication is disabled (--test-login)")
+    global _test_login
+    _test_login = True

@@ -34,6 +34,8 @@ def parse_args() -> argparse.Namespace:
         help="Launch an empty development database with Docker.")
     parser.add_argument('--watch', type=FileSet, choices=list(FileSet),
         help="Watch file set for changes and reload it when they occur.")
+    parser.add_argument('--test-login', action='store_true',
+        help="Disable authentication (!!!) and restrict connections to localhost")
     parser.add_argument('--prod', default=False, help="Enables production mode.")  # FIXME WIP
     parser.add_argument('--save-interval', default=30, type=float,
         help="Sets the database commit interval (in seconds).")
@@ -92,6 +94,8 @@ _prod_mode: bool
 _save_interval: int
 _host: str
 _port: int
+_test_login: bool
+
 
 _mud_proc: Process  # Currently running subprocess
 _restart_flag: bool = True  # True if starting for first time or restarting
@@ -111,7 +115,7 @@ def _mudproc_entrypoint() -> None:
     import tinymud
     loop = asyncio.get_event_loop()
     loop.create_task(tinymud.start(db_url=_db_url, game_path=_game_path,
-        prod_mode=_prod_mode, save_interval=_save_interval, host=_host, port=_port))
+        prod_mode=_prod_mode, save_interval=_save_interval, host=_host, port=_port, test_login=_test_login))
     loop.run_forever()
 
 
@@ -159,6 +163,10 @@ if __name__ == '__main__':
     _save_interval = args.save_interval
     _host = args.host
     _port = args.port
+    _test_login = args.test_login
+    if _test_login:  # Force to localhost for security reasons
+        _host = 'localhost'
+
 
     # Watch for file changes to trigger reloads
     _observer = watch_files(reloadable, _game_path)

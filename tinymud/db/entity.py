@@ -19,6 +19,10 @@ from .schema import TableSchema
 _entity_conn: Connection
 
 
+class _FieldNames:
+    """Field names are setattr'd into instances of this."""
+
+
 T = TypeVar('T', bound='Entity')
 
 
@@ -35,7 +39,7 @@ class Entity:
     _sql_delete: str
 
     # 'Entity' with attributes to support query DSL
-    _field_names: object
+    _field_names: _FieldNames
 
     # Cache to avoid querying out-of-date entities from database
     # As long as change queue (or some other cache) holds the entity,
@@ -102,7 +106,7 @@ class Entity:
         # (DB may have entities missing from cache, so we need to query them anyway)
         cache: WeakValueDictionary[int, Entity] = cls._cache
         entities = []
-        for record in _entity_conn.fetch(query, *values):
+        for record in await _entity_conn.fetch(query, *values):
             entity_id = record[0]
             if entity_id in cache:  # Use cached entity if possible
                 entities.append(cache[entity_id])
@@ -120,13 +124,13 @@ class Entity:
 def _record_to_obj(py_type: Type[T], record: Record) -> T:
     """Converts a database record (row) to entity of given type."""
     # Pass all values (including id) to constructor as named arguments
-    obj = py_type(**record.values())  # type: ignore
+    obj = py_type(**dict(record.items()))  # type: ignore
     return obj
 
 
 def _obj_to_values(obj: Entity, table: TableSchema) -> List[Any]:
     """Gets fields of an entity to as list"""
-    values = []
+    values = [obj.id]
     for column in table['columns']:
         values.append(getattr(obj, column['name']))
     return values
@@ -165,23 +169,31 @@ def entity(entity_type: Type[T]) -> Type[T]:
     # Patch init to set id and queue for _new_entities as needed
     old_init = entity_type.__init__
 
-    def new_init(self: T, **kwargs: Any) -> None:
+    def new_init(self: T, *args: Any, **kwargs: Any) -> None:
         if 'id' in kwargs:  # Loaded from database
-            self.id = kwargs['id']
+            obj_id = kwargs['id']
             del kwargs['id']
         else:  # Actually created a new entity
             # Take next id
             entity_type._next_id += 1
-            self.id = entity_type._next_id
+            obj_id = entity_type._next_id
             _new_entities.put_nowait(self)
 
-        # Call old init to actually set fields
-        # Also raises exceptions if there are extra values
-        old_init(self, **kwargs)  # type: ignore
+        # Call old init to actually set the fields
+        # ... except we can't do that on self (or any instance of its class)
+        # TODO figure out why, according to Python manual it should work
+        temp_obj = _FieldNames()
+        # Raises on missing or extra values
+        old_init(temp_obj, *args, **kwargs)  # type: ignore
+        self.__dict__.update(temp_obj.__dict__)
+        self.__dict__['id'] = obj_id  # Patch in id too
 
         # Cache this entity to its type (weakly referenced)
         entity_type._cache[self.id] = self
     setattr(entity_type, '__init__', new_init)
+
+    # Create cache (mainly to avoid duplicated entities in memory)
+    entity_type._cache = WeakValueDictionary()
 
     # Queue for async init
     _async_init_needed.add(entity_type)
@@ -223,9 +235,9 @@ async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool)
         entity_type._sql_delete = schema.get_sql_delete(table['name'])
 
         # Populate field names used for query DSL (select and friends)
-        field_names: List[OverloadedField] = []
+        field_names: _FieldNames = _FieldNames()
         for name in fields.keys():
-            field_names.append(OverloadedField(entity_type, name))
+            setattr(field_names, name, (OverloadedField(entity_type, name)))
         entity_type._field_names = field_names
 
         # Patch in change detection for fields
@@ -268,7 +280,7 @@ async def _save_entities() -> None:
     while True:
         entity = await _changed_entities.get()  # Block until entity is available
         entity_type = type(entity)
-        await _entity_conn.execute(entity_type._sql_update, _obj_to_values(entity, entity_type._schema))
+        await _entity_conn.execute(entity_type._sql_update, *_obj_to_values(entity, entity_type._schema))
 
 
 async def _create_entities() -> None:
@@ -278,7 +290,7 @@ async def _create_entities() -> None:
         entity = await _new_entities.get()  # Block until entity is available
         await entity.__entity_created__()  # Call on created hook here (it is async)
         entity_type = type(entity)
-        await _entity_conn.execute(entity_type._sql_insert, _obj_to_values(entity, entity_type._schema))
+        await _entity_conn.execute(entity_type._sql_insert, *_obj_to_values(entity, entity_type._schema))
 
 
 async def _rotate_transaction(interval: float) -> None:

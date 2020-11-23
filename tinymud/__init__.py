@@ -11,10 +11,11 @@ from tinymud.db.entity import init_entity_system
 
 from tinymud.world.gameobj import init_obj_system
 from tinymud.world.place import start_places_tick
+from tinymud.world.user import enable_test_login
 
 
 async def start(db_url: str, game_path: Path, prod_mode: bool, save_interval: int,
-        host: str, port: int) -> None:
+        host: str, port: int, test_login: bool) -> None:
     # Wait until database is up
     # This is especially relevant for development Docker database
     while True:
@@ -33,6 +34,10 @@ async def start(db_url: str, game_path: Path, prod_mode: bool, save_interval: in
 
     await init_obj_system()
     await start_places_tick(0.2)  # TODO configurable tick rate
+
+    # If test login was enabled, disable authentication
+    if test_login:
+        enable_test_login()
 
     # Run Sanic-based web application
     await run_app(host, port)

@@ -3,11 +3,13 @@
 from aiohttp.web import Application, AppRunner, Request, Response, RouteTableDef, TCPSite
 
 from .auth import auth_app
+from .client_dev import dev_routes
 from .game import game_app
 
 app = Application()
 app.add_subapp('/auth/', auth_app)
 app.add_subapp('/game/', game_app)
+app.add_routes(dev_routes)
 
 routes = RouteTableDef()
 

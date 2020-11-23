@@ -193,10 +193,10 @@ def get_sql_insert(table: TableSchema) -> str:
 
     $1: entity id, $2-$n: values of columns
     """
-    columns = []
+    columns = ['$1']  # id doesn't appear in columns
     for i, column in enumerate(table['columns']):
-        columns.append(f'${i}')
-    return f'INSERT INTO {table} VALUES ({", ".join(columns)})'
+        columns.append(f'${i + 2}')
+    return f'INSERT INTO {table["name"]} VALUES ({", ".join(columns)})'
 
 
 def get_sql_select(table: str) -> str:
@@ -213,7 +213,7 @@ def get_sql_update(table: TableSchema) -> str:
     for i, column in enumerate(table['columns']):
         if column['name'] != 'id':  # Ignore id column, it is condition for update
             columns.append(f'{column["name"]} = ${i + 1}')
-    return f'UPDATE {table} SET {", ".join(columns)} WHERE id = $1'
+    return f'UPDATE {table["name"]} SET {", ".join(columns)} WHERE id = $1'
 
 
 def get_sql_delete(table: str) -> str:
