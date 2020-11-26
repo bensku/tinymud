@@ -37,6 +37,12 @@ class UpdatePlace(OutMessage):
     items: Optional[List[VisibleObj]]
 
 
+class UpdateCharacter(OutMessage):
+    """Update details about currently played character."""
+    name: Optional[str]
+    inventory: Optional[List[VisibleObj]]
+
+
 class InMessage(BaseModel):
     """Message received by server from client."""
 
@@ -143,10 +149,14 @@ async def game_ws(request: Request) -> WebSocketResponse:
 
     # Wait for client to send JWT auth token
     auth_token = validate_token(await ws.receive())
-    user = User.get(auth_token['user_id'])
+    user = await User.get(auth_token['user_id'])
     session = Session(user, ws)
 
-    # TODO character selection
+    # TODO character creation, multiple characters, etc.
+    character = await Character.select(Character.c().owner == user.id)
+    if not character:
+        pass  # TODO create it
+    session.set_character(character)
 
     # Receive messages and deal with them
     while True:

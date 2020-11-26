@@ -81,8 +81,14 @@ class Place(Entity):
         place ticks, in seconds. This is NOT necessarily same as time between
         this and previous tick (that may or may not have even occurred).
         """
+        # Swap change flags to none, so new changes won't take effect mid-tick
+        # (and will be present in self._changes for next tick)
+        changes = self._changes
+        self._changes = ChangeFlags(0)
+
+        # Call tick handler on all characters
         for character in self.characters():
-            await character.on_tick(delta, self._changes)
+            await character.on_tick(delta, changes)
 
     async def on_character_enter(self, character: Character) -> None:
         """Called when an character enters this place."""
