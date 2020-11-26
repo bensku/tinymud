@@ -1,0 +1,23 @@
+/* Basic page layout using CSS grid */
+
+body {
+    margin: 0px;
+    margin-left: 20px;
+    padding-top: 0px;
+}
+
+#game-root {
+    display: grid;
+    grid-template: "sidebar place" auto / 1fr 3fr;
+}
+
+#sidebar {
+    grid-area: sidebar;
+    min-width: 300px;
+    max-width: 500px;
+}
+
+#place {
+    grid-area: place;
+    max-width: 900px;
+}

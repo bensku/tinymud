@@ -1,0 +1,21 @@
+{
+  "name": "tinymud-client",
+  "version": "0.0.1",
+  "description": "Tinymud client/frontend",
+  "main": "index.js",
+  "author": "bensku",
+  "scripts": {
+    "vendor": "mkdir -p dist && cp -R vendor dist",
+    "watch": "npm run vendor && rollup --config --watch",
+    "build": "npm run vendor && rollup --config && cp -R assets/* dist"
+  },
+  "dependencies": {
+    "jwt-decode": "^3.1.2",
+    "typescript": "^4.1.2"
+  },
+  "devDependencies": {
+    "@rollup/plugin-typescript": "^6.1.0",
+    "rollup": "^2.33.3",
+    "tslib": "^2.0.3"
+  }
+}
