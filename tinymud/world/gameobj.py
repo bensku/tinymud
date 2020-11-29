@@ -1,6 +1,6 @@
 """Core game object types."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import inspect
 from typing import Dict, List, Optional, Tuple, Type
 
@@ -16,6 +16,7 @@ class ObjType:
     All types have both (unique) internal name and user-facing name.
     They may also have a longer description ("lore") that is shown (TODO when?).
     """
+    id: int = field(init=False)
     id_str: str
     name: str
     lore: Optional[str]
@@ -68,7 +69,8 @@ async def init_obj_system() -> None:
         record = await _TypeMapping.select(_TypeMapping.c().id_str == obj_type.id_str)
         if not record:  # New type, add to database table
             record = _TypeMapping(obj_type.id_str)
-        _obj_types[record.id] = obj_type
+        obj_type.id = record.id  # Type knows their own id
+        _obj_types[record.id] = obj_type  # And we know type the id refers to
 
     logger.info(f"Found {len(_register_queue)} GameObj types")
 

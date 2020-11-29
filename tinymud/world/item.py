@@ -15,13 +15,20 @@ class ItemType(ObjType):
     pass
 
 
-def item(id_str: str) -> Callable[[Type[ItemType]], Type[ItemType]]:
-    def decorator(item_type: Type[ItemType]) -> Type[ItemType]:
+def item(id_str: str) -> Callable[[Type[ItemType]], ItemType]:
+    def decorator(item_type: Type[ItemType]) -> ItemType:
         name, lore = _docstring_extract(item_type)
         instance = item_type('item.' + id_str, name, lore)
         _register_obj_type(instance)
         return instance
     return decorator
+
+
+@dataclass
+class ItemTemplate:
+    """A template of an item."""
+    type: ItemType
+    name: str
 
 
 @entity

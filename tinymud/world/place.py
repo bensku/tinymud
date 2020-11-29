@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass, field
 from enum import Flag, auto
 import time
-from typing import List, Set
+from typing import Dict, List, Optional, Set, ValuesView
 from weakref import ReferenceType, ref
 
 from loguru import logger
@@ -23,7 +23,7 @@ class _CachedPlace:
     This prevents the cached information from leaking when the Place is
     unloaded by GC.
     """
-    characters: Set[Character]
+    characters: Dict[int, Character]
 
 
 class ChangeFlags(Flag):
@@ -57,13 +57,26 @@ class Place(Entity):
     header: str
 
     _cache: _CachedPlace = field(init=False)
+    _cache_done: bool = False
     _changes: ChangeFlags = ChangeFlags(0)
 
-    def __post_init__(self) -> None:
-        # Create cache of this place
-        characters = Character.select(Character.c().place == self.id)
-        self._cache = _CachedPlace(characters)
+    @staticmethod
+    async def from_addr(address: str) -> Optional['Place']:
+        """Gets a place based on its unique address."""
+        return await Place.select(Place.c().address == address)
+
+    def __object_created__(self) -> None:
         _new_places.append(ref(self))  # Add to be ticked
+
+    async def make_cache(self) -> None:
+        if self._cache_done:
+            return  # Cache already created
+        # Create cache of this place
+        characters = {}
+        for character in await Character.select_many(Character.c().place == self.id):
+            characters[character.id] = character
+        self._cache = _CachedPlace(characters)
+        self._cache_done = True
 
     async def passages(self) -> List['Passage']:
         return await Passage.select_many(Passage.c().place == self.id)
@@ -71,8 +84,9 @@ class Place(Entity):
     async def items(self) -> List[Item]:
         return await Item.select_many(Item.c().place == self.id)
 
-    def characters(self) -> Set[Character]:
-        return self._cache.characters
+    async def characters(self) -> ValuesView[Character]:
+        await self.make_cache()
+        return self._cache.characters.values()
 
     async def on_tick(self, delta: float) -> None:
         """Called when this place is ticked.
@@ -81,23 +95,26 @@ class Place(Entity):
         place ticks, in seconds. This is NOT necessarily same as time between
         this and previous tick (that may or may not have even occurred).
         """
+        await self.make_cache()
         # Swap change flags to none, so new changes won't take effect mid-tick
         # (and will be present in self._changes for next tick)
         changes = self._changes
         self._changes = ChangeFlags(0)
 
         # Call tick handler on all characters
-        for character in self.characters():
+        for character in await self.characters():
             await character.on_tick(delta, changes)
 
     async def on_character_enter(self, character: Character) -> None:
         """Called when an character enters this place."""
-        self._cache.characters.add(character)
+        await self.make_cache()
+        self._cache.characters[character.id] = character
         self._changes |= ChangeFlags.CHARACTERS
 
-    def on_character_exit(self, character: Character) -> None:
+    async def on_character_exit(self, character: Character) -> None:
         """Called when an character exists this place."""
-        self._cache.characters.remove(character)
+        await self.make_cache()
+        del self._cache.characters[character.id]
         self._changes |= ChangeFlags.CHARACTERS
 
 
@@ -133,7 +150,7 @@ async def _places_tick(delta: float) -> None:
     _new_places = []  # Places that get loaded/added during this tick
 
     # Process newly added places to avoid 1 tick delay
-    for place_ref in _new_places:
+    for place_ref in next_places:
         place = place_ref()
         if place:
             await place.on_tick(delta)
@@ -172,3 +189,24 @@ async def start_places_tick(delta_target: float) -> None:
     """Starts places tick as background task."""
     asyncio.create_task(_places_tick_loop(delta_target))
     logger.info(f"Ticking loaded places every {delta_target} seconds")
+
+
+_limbo_place: Place
+
+
+async def init_limbo_place() -> None:
+    """Initializes the 'default' place, Limbo.
+
+    Limbo is used (hopefully) only during development, when other places
+    don't exist in the database.
+    """
+    limbo = await Place.from_addr('tinymud.limbo')
+    if not limbo:
+        logger.debug("Creating limbo place (empty database?)")
+        limbo = Place(
+            address='tinymud.limbo',
+            title="Limbo",
+            header="Nothing to see here."
+        )
+    global _limbo_place
+    _limbo_place = limbo

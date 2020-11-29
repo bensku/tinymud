@@ -1,4 +1,5 @@
 import { authenticate, AuthFailure } from "./auth";
+import { prepareGame } from "./game";
 import { changePage } from "./pages";
 
 export async function loginPageHandler() {
@@ -9,7 +10,7 @@ export async function loginPageHandler() {
         if (result instanceof AuthFailure) {
             alert('Authentication failed.'); // TODO improve error
         } else {
-            changePage('game');
+            await prepareGame();
         }
     });
 }

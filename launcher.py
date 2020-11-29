@@ -167,7 +167,6 @@ if __name__ == '__main__':
     if _test_login:  # Force to localhost for security reasons
         _host = 'localhost'
 
-
     # Watch for file changes to trigger reloads
     _observer = watch_files(reloadable, _game_path)
 

@@ -14,9 +14,13 @@ import tinymud.db.schema as schema
 from .schema import TableSchema
 
 
-# Connection to use for entity queries
-# This has a transaction always open, but committed every once a while
-_entity_conn: Connection
+# Global connection pool of entity system
+# FIXME try to ensure data consistency on crash
+# Simple transactions won't help, because we're using multiple connections
+# Using one connections with a queue for ALL operations would be safer
+# (but too complex to implement for now)
+# Let's just hope it doesn't crash
+_conn_pool: Pool
 
 
 class _FieldNames:
@@ -44,7 +48,7 @@ class Entity:
     # Cache to avoid querying out-of-date entities from database
     # As long as change queue (or some other cache) holds the entity,
     # this will keep it too
-    _cache: WeakValueDictionary[int, 'Entity']
+    _entity_cache: WeakValueDictionary[int, 'Entity']
 
     async def __entity_created__(self) -> None:
         """Called when this entity is created in database.
@@ -55,6 +59,9 @@ class Entity:
         It also gets called immediately after constructor sychronously.
         """
         pass
+
+    def __object_created__(self) -> None:
+        """Called at end of constructor of entity type."""
 
     async def __entity_destroyed__(self) -> None:
         """Called when this entity is destroyed.
@@ -68,11 +75,12 @@ class Entity:
     @classmethod
     async def get(cls: Type[T], id: int) -> Optional[T]:
         """Gets an entity by id."""
-        cache: WeakValueDictionary[int, Entity] = cls._cache
+        cache: WeakValueDictionary[int, Entity] = cls._entity_cache
         if id in cache:  # Check if our cache has it
             return cast(T, cache[id])
         query = cls._sql_select + ' WHERE id = $1'
-        record = await _entity_conn.fetchrow(query, id)
+        async with _conn_pool.acquire() as conn:
+            record = await conn.fetchrow(query, id)
         return _record_to_obj(cls, record) if record else None
 
     @classmethod
@@ -104,14 +112,15 @@ class Entity:
         # Query all matching from database
         # Replace some records with entities from cache
         # (DB may have entities missing from cache, so we need to query them anyway)
-        cache: WeakValueDictionary[int, Entity] = cls._cache
+        cache: WeakValueDictionary[int, Entity] = cls._entity_cache
         entities = []
-        for record in await _entity_conn.fetch(query, *values):
-            entity_id = record[0]
-            if entity_id in cache:  # Use cached entity if possible
-                entities.append(cache[entity_id])
-            else:  # Not found, actually convert record to entity
-                entities.append(_record_to_obj(cls, record))
+        async with _conn_pool.acquire() as conn:
+            for record in await conn.fetch(query, *values):
+                entity_id = record[0]
+                if entity_id in cache:  # Use cached entity if possible
+                    entities.append(cache[entity_id])
+                else:  # Not found, actually convert record to entity
+                    entities.append(_record_to_obj(cls, record))
         return cast(List[T], entities)
 
     @classmethod
@@ -189,11 +198,15 @@ def entity(entity_type: Type[T]) -> Type[T]:
         self.__dict__['id'] = obj_id  # Patch in id too
 
         # Cache this entity to its type (weakly referenced)
-        entity_type._cache[self.id] = self
+        entity_type._entity_cache[self.id] = self
+
+        # Our __post_init__ replacement
+        if hasattr(self, '__object_created__'):
+            self.__object_created__()
     setattr(entity_type, '__init__', new_init)
 
     # Create cache (mainly to avoid duplicated entities in memory)
-    entity_type._cache = WeakValueDictionary()
+    entity_type._entity_cache = WeakValueDictionary()
 
     # Queue for async init
     _async_init_needed.add(entity_type)
@@ -245,6 +258,7 @@ async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool)
             if not key.startswith('_'):  # Ignore non-DB fields
                 # Queue to be saved and prevent GC before that happens
                 _changed_entities.put_nowait(self)
+            Entity.__setattr__(self, key, value)  # Update changed value to object
         setattr(entity_type, '__setattr__', mark_changed)
         # Queue table to be created/migrated
         await migrator.add_table(entity_type._schema)
@@ -277,36 +291,35 @@ _changed_entities: asyncio.Queue[Entity] = asyncio.Queue()
 async def _save_entities() -> None:
     """Saves entities to DB as soon as they change."""
     # UPDATE changed entities
-    while True:
-        entity = await _changed_entities.get()  # Block until entity is available
-        entity_type = type(entity)
-        await _entity_conn.execute(entity_type._sql_update, *_obj_to_values(entity, entity_type._schema))
+    async with _conn_pool.acquire() as conn:
+        while True:
+            entity = await _changed_entities.get()  # Block until entity is available
+            entity_type = type(entity)
+            values = _obj_to_values(entity, entity_type._schema)
+            try:
+                await conn.execute(entity_type._sql_update, *values)
+            except:
+                logger.error(f"Saving changes of entity {entity} failed")
+                logger.error(f"values: {values}")
+                logger.error(f"sql: {entity_type._sql_update}")
+                raise
 
 
 async def _create_entities() -> None:
     """Creates entities in DB as soon as they've been init'd."""
     # INSERT newly created entities
-    while True:
-        entity = await _new_entities.get()  # Block until entity is available
-        await entity.__entity_created__()  # Call on created hook here (it is async)
-        entity_type = type(entity)
-        await _entity_conn.execute(entity_type._sql_insert, *_obj_to_values(entity, entity_type._schema))
-
-
-async def _rotate_transaction(interval: float) -> None:
-    """Commits and starts a new transaction periodically."""
-    while True:
-        logger.trace("Rotating transaction")
-        async with _entity_conn.transaction():
-            await asyncio.sleep(interval)
-            # TODO pause place tick and user interactions until we can commit
-    # TODO how does this work when server stops normally?
+    async with _conn_pool.acquire() as conn:
+        while True:
+            entity = await _new_entities.get()  # Block until entity is available
+            await entity.__entity_created__()  # Call on created hook here (it is async)
+            entity_type = type(entity)
+            await conn.execute(entity_type._sql_insert, *_obj_to_values(entity, entity_type._schema))
 
 
 async def init_entity_system(conn_pool: Pool, db_data: Path, prod_mode: bool, save_interval: float) -> None:
     # Reserve connection for 'one-shot' operations
-    global _entity_conn
-    _entity_conn = await conn_pool.acquire()
+    global _conn_pool
+    _conn_pool = conn_pool
 
     # Perform async initialization as needed for entities
     async with conn_pool.acquire() as conn:
@@ -317,4 +330,3 @@ async def init_entity_system(conn_pool: Pool, db_data: Path, prod_mode: bool, sa
     # Periodically save newly created and modified entities
     asyncio.create_task(_save_entities())
     asyncio.create_task(_create_entities())
-    asyncio.create_task(_rotate_transaction(save_interval))

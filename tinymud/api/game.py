@@ -1,12 +1,13 @@
 """Game-related APIs (mostly Websocket)."""
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Type, TypeVar
 
-from aiohttp.web import Application, Request, RouteTableDef, WebSocketResponse
+from aiohttp.web import Application, Request, RouteTableDef, WebSocketResponse, WSMsgType
 from pydantic import BaseModel
 
 from .auth import validate_token
-from tinymud.world.character import Character
+from tinymud.game import game_hooks
+from tinymud.world.character import Character, CharacterTemplate
 from tinymud.world.character import GameObj
 from tinymud.world.place import ChangeFlags, Place
 from tinymud.world.user import User
@@ -15,7 +16,7 @@ game_app = Application()
 routes = RouteTableDef()
 
 
-class OutMessage(BaseModel):
+class ServerMessage(BaseModel):
     """Message sent from server to client."""
 
 
@@ -24,7 +25,7 @@ class VisibleObj(BaseModel):
     name: str
 
 
-class UpdatePlace(OutMessage):
+class UpdatePlace(ServerMessage):
     """Update details about current place.
 
     Data that doesn't need to be updated can be left as None if changes are
@@ -37,14 +38,32 @@ class UpdatePlace(OutMessage):
     items: Optional[List[VisibleObj]]
 
 
-class UpdateCharacter(OutMessage):
+class UpdateCharacter(ServerMessage):
     """Update details about currently played character."""
     name: Optional[str]
     inventory: Optional[List[VisibleObj]]
 
 
-class InMessage(BaseModel):
+class CreateCharacter(ServerMessage):
+    """Request client to create a character."""
+    options: List[str]
+
+
+class ClientMessage(BaseModel):
     """Message received by server from client."""
+
+
+class PickCharacterTemplate(ClientMessage):
+    """Respond to character creation prompt."""
+    name: str
+    selected: int
+
+
+T = TypeVar('T', bound=ClientMessage)
+
+
+class SocketClosed(Exception):
+    """Raised when a WebSocket is closed."""
 
 
 class Session:
@@ -69,21 +88,39 @@ class Session:
 
         Permission checks are done to ensure this is allowed.
         """
-        if new_char.owner != self.user.id:  # Permission check
+        if new_char.owner != self.user.id:  # Permission check{type: 'PickCharacterTemplate', name: characterName.value, selected: index}
             raise ValueError(f"user {self.user.name} not allowed to control character id {new_char.id}")
 
+        if self._character:  # Detach from previous character, if any
+            self._character._controller = None
+
+        # Assuming direct control
         self._character = new_char
-        # Also keep the current place loaded
-        self._place = await Place.get(new_char.place)
+        new_char._controller = self
+
+        # Send character updates to client
+        await self.send_msg(UpdateCharacter(name=new_char.name,
+            inventory=self._get_client_objs(await new_char.inventory())))
+        # Also keeps current place in memory due to self._place
+        await self.moved_place(await Place.get(new_char.place))
 
     @property
     def place(self) -> Optional[Place]:
         return self._place
 
-    async def send_msg(self, msg: OutMessage) -> None:
+    async def send_msg(self, msg: ServerMessage) -> None:
         fields = msg.dict()
-        fields['_id'] = type(msg).__name__
+        fields['type'] = type(msg).__name__
         await self.socket.send_json(fields)
+
+    async def receive_msg(self, type: Type[T]) -> T:
+        msg = await self.socket.receive()
+        if msg.type == WSMsgType.CLOSE:
+            raise SocketClosed() # Session is over
+        content = msg.json()
+        if content['type'] != type.__name__:
+            raise ValueError(f"expected message type {type.__name__}, but got {content['type']}")
+        return type(**content)
 
     def _get_client_objs(self, objs: List[GameObj]) -> List[VisibleObj]:
         """Gets objects that can be sent to client.
@@ -118,7 +155,7 @@ class Session:
         # TODO characters, items
         characters: List[Character]
         if changes & ChangeFlags.CHARACTERS:
-            characters = self._get_client_objs(place.characters())
+            characters = self._get_client_objs(await place.characters())
         else:
             passages = None
         items: List[VisibleObj] = []  # TODO item support
@@ -142,26 +179,46 @@ class Session:
                 ChangeFlags.CHARACTERS | ChangeFlags.ITEMS)
 
 
+async def create_character(session: Session) -> Character:
+    """Goes through character creation with the client."""
+    options = await game_hooks().get_character_options(session.user)
+    descriptions = [option.description for option in options]
+
+    # Tell client their options, wait for them to pick one (or quit)
+    await session.send_msg(CreateCharacter(options=descriptions))
+    response = await session.receive_msg(PickCharacterTemplate)
+    template = options[response.selected]
+
+    # TODO game name validation hook (for e.g. unique names)
+
+    # Create the character and move it to starting place
+    character = Character(place=None, obj_type_id=template.type.id, name=response.name, owner=session.user.id)
+    place = await game_hooks().get_starting_place(character, session.user)
+    await character.move(place)  # Won't send anything to client, session not attached
+    return character
+
+
 @routes.get('/ws')
 async def game_ws(request: Request) -> WebSocketResponse:
     ws = WebSocketResponse()
     await ws.prepare(request)
 
     # Wait for client to send JWT auth token
-    auth_token = validate_token(await ws.receive())
+    auth_token = validate_token((await ws.receive()).data)
     user = await User.get(auth_token['user_id'])
     session = Session(user, ws)
 
-    # TODO character creation, multiple characters, etc.
+    # TODO character select screen (full multi character support)
     character = await Character.select(Character.c().owner == user.id)
     if not character:
-        pass  # TODO create it
-    session.set_character(character)
+        character = await create_character(session)
+    await session.set_character(character)  # Take control of the character
 
     # Receive messages and deal with them
     while True:
+        # session.receive_msg() expects type, which we don't know
         msg = await ws.receive_json()
-        id = msg._id    
+        type_id = msg.type
 
 
     return ws

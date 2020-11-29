@@ -212,7 +212,7 @@ def get_sql_update(table: TableSchema) -> str:
     columns = []
     for i, column in enumerate(table['columns']):
         if column['name'] != 'id':  # Ignore id column, it is condition for update
-            columns.append(f'{column["name"]} = ${i + 1}')
+            columns.append(f'{column["name"]} = ${i + 2}')
     return f'UPDATE {table["name"]} SET {", ".join(columns)} WHERE id = $1'
 
 
