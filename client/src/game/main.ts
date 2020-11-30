@@ -1,37 +1,21 @@
-import { createCharacter } from "./character";
-import { BACKEND_URL } from "./common";
-import { changePage } from "./pages";
-import { ClientMessage, GameSocket, openGameSocket, ServerMessage } from "./socket";
+import { createCharacter } from "../character";
+import { BACKEND_URL } from "../common";
+import { GameView } from "./view";
+import { changePage } from "../pages";
+import { ClientMessage, GameSocket, openGameSocket, ServerMessage } from "../socket";
+import { CreateCharacter } from "./message";
 
-/**
- * An object we can show to player.
- */
-interface VisibleObj {
-    name: string;
-}
-
-interface UpdatePlace extends ServerMessage {
-    title?: string;
-    header?: string;
-    passages?: Record<number, string>;
-    characters?: VisibleObj[];
-    items?: VisibleObj[];
-}
-
-interface CreateCharacter extends ServerMessage {
-    options: string[];
-}
-
-interface PickCharacterTemplate extends ClientMessage {
-    name: string;
-    selected: number
-}
-
+let view: GameView;
 let ws: GameSocket;
 
 async function handleReceivedMsg(msg: ServerMessage) {
     switch (msg.type) {
-        // TODO
+        case 'UpdatePlace':
+            view.updatePlace(msg);
+            break;
+        case 'UpdateCharacter':
+            view.updateCharacter(msg);
+            break;
     }
 }
 
@@ -56,12 +40,12 @@ export async function prepareGame() {
             break;
             // TODO character select
         default:
+            await changePage('game'); // Before handling received message!
             await handleReceivedMsg(msg); // Handle message, whatever it was
             await runGame(); // Ready to run game
     }
 }
 
-
 export async function gamePageHandler() {
-    
+    view = new GameView(); // Now that page has the needed elements
 }

@@ -1,5 +1,5 @@
 import { AuthFailure, renewAuthToken } from "./auth";
-import { prepareGame, gamePageHandler } from "./game";
+import { prepareGame, gamePageHandler } from "./game/main";
 import { loginPageHandler } from "./login";
 import { changePage, registerPage } from "./pages";
 

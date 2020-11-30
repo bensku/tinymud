@@ -1,5 +1,5 @@
 import { authenticate, AuthFailure } from "./auth";
-import { prepareGame } from "./game";
+import { prepareGame } from "./game/main";
 import { changePage } from "./pages";
 
 export async function loginPageHandler() {
