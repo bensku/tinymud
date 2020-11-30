@@ -54,6 +54,10 @@ async def renew(request: Request) -> Response:
 
 
 def validate_token(token: str) -> AuthToken:
+    """Validates a JWT token.
+
+    Raises something (TODO document what) if the token should not be accepted.
+    """
     return jwt.decode(token, _jwt_secret, algorithms=['HS256'])  # type: ignore
 
 

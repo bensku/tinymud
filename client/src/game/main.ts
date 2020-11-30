@@ -19,7 +19,7 @@ async function handleReceivedMsg(msg: ServerMessage) {
     }
 }
 
-async function runGame() {
+export async function runGame() {
     await changePage('game'); // In case we weren't there yet
     // Loop forever, handling messages from server
     while (true) {

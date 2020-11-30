@@ -1,62 +1,16 @@
-"""Game-related APIs (mostly Websocket)."""
+"""Game session management.
 
-from typing import Dict, List, Optional, Type, TypeVar
+A session consists of a WebSocket connection to a client, an user that the
+clients has authenticated and a character controlled by them.
+"""
+from typing import Dict, Iterable, List, Optional, Type, TypeVar
 
-from aiohttp.web import Application, Request, RouteTableDef, WebSocketResponse, WSMsgType
-from pydantic import BaseModel
+from aiohttp.web import WebSocketResponse, WSMsgType
 
-from .auth import validate_token
+from .message import ClientMessage, ServerMessage, VisibleObj
+from .message import CreateCharacter, PickCharacterTemplate, UpdateCharacter, UpdatePlace
 from tinymud.game import game_hooks
-from tinymud.world.character import Character, CharacterTemplate
-from tinymud.world.character import GameObj
-from tinymud.world.place import ChangeFlags, Place
-from tinymud.world.user import User
-
-game_app = Application()
-routes = RouteTableDef()
-
-
-class ServerMessage(BaseModel):
-    """Message sent from server to client."""
-
-
-class VisibleObj(BaseModel):
-    """Visible information about GameObj for client."""
-    name: str
-
-
-class UpdatePlace(ServerMessage):
-    """Update details about current place.
-
-    Data that doesn't need to be updated can be left as None if changes are
-    not needed.
-    """
-    title: Optional[str]
-    header: Optional[str]
-    passages: Optional[Dict[int, str]]
-    characters: Optional[List[VisibleObj]]
-    items: Optional[List[VisibleObj]]
-
-
-class UpdateCharacter(ServerMessage):
-    """Update details about currently played character."""
-    name: Optional[str]
-    inventory: Optional[List[VisibleObj]]
-
-
-class CreateCharacter(ServerMessage):
-    """Request client to create a character."""
-    options: List[str]
-
-
-class ClientMessage(BaseModel):
-    """Message received by server from client."""
-
-
-class PickCharacterTemplate(ClientMessage):
-    """Respond to character creation prompt."""
-    name: str
-    selected: int
+from tinymud.world import ChangeFlags, Character, GameObj, Place, User
 
 
 T = TypeVar('T', bound=ClientMessage)
@@ -116,13 +70,13 @@ class Session:
     async def receive_msg(self, type: Type[T]) -> T:
         msg = await self.socket.receive()
         if msg.type == WSMsgType.CLOSE:
-            raise SocketClosed() # Session is over
+            raise SocketClosed()  # Session is over
         content = msg.json()
         if content['type'] != type.__name__:
             raise ValueError(f"expected message type {type.__name__}, but got {content['type']}")
         return type(**content)
 
-    def _get_client_objs(self, objs: List[GameObj]) -> List[VisibleObj]:
+    def _get_client_objs(self, objs: Iterable[GameObj]) -> List[VisibleObj]:
         """Gets objects that can be sent to client.
 
         Only public information from GameObjs is extracted for sending.
@@ -196,32 +150,3 @@ async def create_character(session: Session) -> Character:
     place = await game_hooks().get_starting_place(character, session.user)
     await character.move(place)  # Won't send anything to client, session not attached
     return character
-
-
-@routes.get('/ws')
-async def game_ws(request: Request) -> WebSocketResponse:
-    ws = WebSocketResponse()
-    await ws.prepare(request)
-
-    # Wait for client to send JWT auth token
-    auth_token = validate_token((await ws.receive()).data)
-    user = await User.get(auth_token['user_id'])
-    session = Session(user, ws)
-
-    # TODO character select screen (full multi character support)
-    character = await Character.select(Character.c().owner == user.id)
-    if not character:
-        character = await create_character(session)
-    await session.set_character(character)  # Take control of the character
-
-    # Receive messages and deal with them
-    while True:
-        # session.receive_msg() expects type, which we don't know
-        msg = await ws.receive_json()
-        type_id = msg.type
-
-
-    return ws
-
-
-game_app.add_routes(routes)

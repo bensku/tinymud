@@ -1,3 +1,4 @@
+import { runGame } from "./game/main";
 import { changePage } from "./pages";
 import { GameSocket } from "./socket";
 
@@ -22,8 +23,8 @@ export async function createCharacter(ws: GameSocket, options: string[]) {
         const name = characterName.value;
         const index = parseInt(choice.getAttribute('option-index')!);
 
-        await changePage('game'); // Open game to not miss place/character messages
         // Tell server our character name and index of template we chose
         ws.send({type: 'PickCharacterTemplate', name: name, selected: index});
+        await runGame(); // Enter game, server will get back to us soon...
     });
 }
