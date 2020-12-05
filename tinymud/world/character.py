@@ -85,3 +85,4 @@ class Character(GameObj, Placeable):
 
 # FIXME import order hack :(
 from .item import Item
+from .place import ChangeFlags

@@ -12,15 +12,13 @@ from loguru import logger
 from .migration import TableMigrator
 import tinymud.db.schema as schema
 from .schema import TableSchema
-
+from .queue import DbQueue
 
 # Global connection pool of entity system
 # FIXME try to ensure data consistency on crash
-# Simple transactions won't help, because we're using multiple connections
-# Using one connections with a queue for ALL operations would be safer
-# (but too complex to implement for now)
-# Let's just hope it doesn't crash
+# DbQueue will make this much easier, but won't help by itself
 _conn_pool: Pool
+_db_queue: DbQueue
 
 
 class _FieldNames:
@@ -80,14 +78,21 @@ class Entity:
         """
         await self.__entity_destroyed__()
         self._destroyed = True
-        async with _conn_pool.acquire() as conn:
-            conn.execute(type(self)._sql_delete, self.id)
+
+        # Queue destruction (no reference to self being destroyed)
+        _db_queue.queue_write(None, type(self)._sql_delete, self.id)
+        await _db_queue.wait_for_writes()  # Wait for deletion to complete
+        # __entity_destroyed__ is async, and it would be confusing if await
+        # didn't actually wait for references to this to be gone
 
     @classmethod
     async def get(cls: Type[T], id: int) -> Optional[T]:
         """Gets an entity by id."""
         if id is None:
             raise ValueError('missing id')
+
+        # Wait for writes issued before this
+        await _db_queue.wait_for_writes()
 
         cache: WeakValueDictionary[int, Entity] = cls._entity_cache
         if id in cache:  # Check if our cache has it
@@ -104,6 +109,9 @@ class Entity:
     @classmethod
     async def select_many(cls: Type[T], *args: bool) -> List[T]:
         # args type is fake, FIXME if possible
+
+        # Wait for writes issued before this
+        await _db_queue.wait_for_writes()
 
         # Generate WHERE clauses and associate values with them
         clauses = []
@@ -196,11 +204,12 @@ def entity(entity_type: Type[T]) -> Type[T]:
         if 'id' in kwargs:  # Loaded from database
             obj_id = kwargs['id']
             del kwargs['id']
+            new_entity = False
         else:  # Actually created a new entity
             # Take next id
             entity_type._next_id += 1
             obj_id = entity_type._next_id
-            _new_entities.put_nowait(self)
+            new_entity = True
 
         # Call old init to actually set the fields
         # ... except we can't do that on self (or any instance of its class)
@@ -218,6 +227,9 @@ def entity(entity_type: Type[T]) -> Type[T]:
         # Our __post_init__ replacement
         if hasattr(self, '__object_created__'):
             self.__object_created__()
+
+        if new_entity:  # Queue for creation in database
+            _db_queue.queue_write(self, entity_type._sql_insert, _obj_to_values(self, entity_type._schema))
     setattr(entity_type, '__init__', new_init)
 
     # Create cache (mainly to avoid duplicated entities in memory)
@@ -270,10 +282,11 @@ async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool)
 
         # Patch in change detection for fields
         def mark_changed(self: T, key: str, value: str) -> None:
+            Entity.__setattr__(self, key, value)  # Update changed value to object
             if not key.startswith('_'):  # Ignore non-DB fields
                 # Queue to be saved and prevent GC before that happens
-                _changed_entities.put_nowait(self)
-            Entity.__setattr__(self, key, value)  # Update changed value to object
+                self_type = type(self)  # NOTE: entity_type local variable is mutated, don't use here
+                _db_queue.queue_write(self, self_type._sql_update, _obj_to_values(self, self_type._schema))
         setattr(entity_type, '__setattr__', mark_changed)
         # Queue table to be created/migrated
         await migrator.add_table(entity_type._schema)
@@ -298,54 +311,16 @@ async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool)
         entity_type._next_id = current_id + 1 if current_id else 0
 
 
-# Newly created and changed entities that need to be saved to DB
-_new_entities: asyncio.Queue[Entity] = asyncio.Queue()
-_changed_entities: asyncio.Queue[Entity] = asyncio.Queue()
-
-
-async def _save_entities() -> None:
-    """Saves entities to DB as soon as they change."""
-    # UPDATE changed entities
-    async with _conn_pool.acquire() as conn:
-        while True:
-            entity = await _changed_entities.get()  # Block until entity is available
-            if entity._destroyed:
-                continue  # Skip entities that shouldn't be saved
-            entity_type = type(entity)
-            values = _obj_to_values(entity, entity_type._schema)
-            try:
-                status = await conn.execute(entity_type._sql_update, *values)
-                if status == 'UPDATE 0':
-                    raise AssertionError("UPDATE did not save entity")
-            except Exception:
-                logger.error(f"Saving changes of entity {entity} failed")
-                logger.error(f"values: {values}")
-                logger.error(f"sql: {entity_type._sql_update}")
-                raise
-
-
-async def _create_entities() -> None:
-    """Creates entities in DB as soon as they've been init'd."""
-    # INSERT newly created entities
-    async with _conn_pool.acquire() as conn:
-        while True:
-            entity = await _new_entities.get()  # Block until entity is available
-            await entity.__entity_created__()  # Call on created hook here (it is async)
-            entity_type = type(entity)
-            await conn.execute(entity_type._sql_insert, *_obj_to_values(entity, entity_type._schema))
-
-
 async def init_entity_system(conn_pool: Pool, db_data: Path, prod_mode: bool, save_interval: float) -> None:
-    # Reserve connection for 'one-shot' operations
+    # Assign global connection pool and queue for writes
     global _conn_pool
+    global _db_queue
     _conn_pool = conn_pool
+    _db_queue = DbQueue()
+    asyncio.create_task(_db_queue.process_queue(await conn_pool.acquire()))
 
     # Perform async initialization as needed for entities
     async with conn_pool.acquire() as conn:
         async with conn.transaction():  # Either all migrations work, or none do
             await _async_init_entities(conn, db_data, prod_mode)
     _async_init_needed.clear()
-
-    # Periodically save newly created and modified entities
-    asyncio.create_task(_save_entities())
-    asyncio.create_task(_create_entities())

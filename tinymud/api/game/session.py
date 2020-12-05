@@ -56,7 +56,6 @@ class Session:
         await self.send_msg(UpdateCharacter(name=new_char.name,
             inventory=self._get_client_objs(await new_char.inventory())))
         # Also keeps current place in memory due to self._place
-        print(new_char)
         await self.moved_place(await Place.get(new_char.place))
 
     @property
