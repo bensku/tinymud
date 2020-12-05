@@ -139,11 +139,11 @@ export class GameSocket {
         this.socket.send(JSON.stringify(msg));
     }
 
-    async receive(type?: string): Promise<ServerMessage> {
+    async receive<T extends ServerMessage>(type?: string): Promise<T> {
         const msg: ServerMessage = JSON.parse(await this.socket.receive());
         if (type && msg.type != type) {
             throw new Error(`expected message type ${type}, but got ${msg.type}`)
         }
-        return msg;
+        return msg as T;
     }
 }

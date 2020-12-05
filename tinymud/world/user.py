@@ -1,5 +1,6 @@
 """User management."""
 
+from enum import IntFlag, auto
 from dataclasses import dataclass
 from typing import List
 
@@ -8,6 +9,19 @@ from loguru import logger
 
 from tinymud.entity import Entity, entity
 from .character import Character
+
+
+class UserRoles(IntFlag):
+    """User roles.
+
+    PLAYERs can play the game. Everyone should have this role.
+
+    EDITORs can modify, create or delete places of the world. They can also
+    manipulate most game objects.
+    """
+    # NOTE: automatic values change if we change order... don't do that
+    PLAYER = auto()
+    EDITOR = auto()
 
 
 @entity
@@ -21,6 +35,11 @@ class User(Entity):
     """
     name: str
     password_hash: str  # argon2 hash, not cleartext password!
+    roles: UserRoles = UserRoles.PLAYER
+
+    def has_role(self, role: UserRoles) -> bool:
+        """Checks if this user has the given role."""
+        return (self.roles & role) != 0
 
     @property
     async def owned_characters(self) -> List[Character]:

@@ -4,7 +4,7 @@ import asyncio
 from dataclasses import dataclass, field
 from enum import Flag, auto
 import time
-from typing import Dict, List, Optional, Set, ValuesView
+from typing import Dict, List, Optional, ValuesView
 from weakref import ReferenceType, ref
 
 from loguru import logger
@@ -159,7 +159,7 @@ async def _places_tick(delta: float) -> None:
     # Iterate over current places
     for place_ref in _places:
         place = place_ref()
-        if place:  # Not GC'd
+        if place and not place._destroyed:  # Not GC'd, not destroyed
             await place.on_tick(delta)
             next_places.append(place_ref)
 

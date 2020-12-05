@@ -1,7 +1,9 @@
 """Table schema management tools."""
 
+from enum import IntFlag
 from dataclasses import dataclass, field
-from typing import Dict, ForwardRef, Generic, List, Optional, Tuple, TypedDict, TypeVar, Union, get_origin, get_args
+from typing import get_origin, get_args
+from typing import Dict, ForwardRef, Generic, List, Optional, Tuple, TypedDict, TypeVar, Union
 
 
 class Column(TypedDict):
@@ -70,6 +72,8 @@ def _to_db_type(py_type: object) -> DbType:
         return _new_db_type('double precision')
     elif py_type == str:
         return _new_db_type('text')
+    elif isinstance(py_type, type) and issubclass(py_type, IntFlag):
+        return _new_db_type('integer')
     else:
         raise TypeError(f"unsupported type {py_type}")
 
@@ -128,7 +132,7 @@ def get_post_create(table: TableSchema) -> List[str]:
             sql.append(f'ALTER TABLE {name} DROP CONSTRAINT IF EXISTS fk_{colname}')
             sql.append((f'ALTER TABLE {name} ADD CONSTRAINT fk_{colname}'
                 f' FOREIGN KEY ({colname})'
-                f' REFERENCES {db_type["foreign_key"]}(id)'))
+                f' REFERENCES {db_type["foreign_key"]}(id) ON DELETE CASCADE'))
     return sql
 
 

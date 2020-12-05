@@ -8,7 +8,8 @@ from .gameobj import GameObj, ObjType, Placeable, _docstring_extract, _register_
 if TYPE_CHECKING:
     from .item import Item, ItemTemplate
     from .place import ChangeFlags, Place
-    from .user import Session, User
+    from .user import User
+    from tinymud.api.game.session import Session
 
 
 @dataclass
@@ -44,6 +45,10 @@ class Character(GameObj, Placeable):
     owner: Optional[Foreign['User']]
     _controller: 'Session' = None
 
+    async def __entity_destroyed__(self) -> None:
+        if self.place:  # Let the place know (to update caches)
+            await (await Place.get(self.place)).on_character_exit(self)
+
     async def inventory(self) -> List['Item']:
         return await Item.select_many(Item.c().owner == self.id)
 
@@ -59,7 +64,7 @@ class Character(GameObj, Placeable):
 
     async def move(self, place: 'Place') -> None:
         """Moves this character to a place."""
-        place_id = self.place  # type: ignore
+        place_id = self.place
         if place_id:  # Initially, a new character has no place
             old_place = await Place.get(place_id)
         else:
@@ -74,7 +79,7 @@ class Character(GameObj, Placeable):
         place is not loaded (for performance reasons).
         """
         # If current place has changed and we have a session, let the client know
-        if place_changes != 0 and self._controller:
+        if place_changes != ChangeFlags(0) and self._controller:
             await self._controller.place_updated(place_changes)
 
 

@@ -42,7 +42,7 @@ class Session:
 
         Permission checks are done to ensure this is allowed.
         """
-        if new_char.owner != self.user.id:  # Permission check{type: 'PickCharacterTemplate', name: characterName.value, selected: index}
+        if new_char.owner != self.user.id:  # Permission check
             raise ValueError(f"user {self.user.name} not allowed to control character id {new_char.id}")
 
         if self._character:  # Detach from previous character, if any
@@ -56,6 +56,7 @@ class Session:
         await self.send_msg(UpdateCharacter(name=new_char.name,
             inventory=self._get_client_objs(await new_char.inventory())))
         # Also keeps current place in memory due to self._place
+        print(new_char)
         await self.moved_place(await Place.get(new_char.place))
 
     @property
@@ -107,7 +108,7 @@ class Session:
             passages = None
 
         # TODO characters, items
-        characters: List[Character]
+        characters: List[VisibleObj]
         if changes & ChangeFlags.CHARACTERS:
             characters = self._get_client_objs(await place.characters())
         else:
@@ -115,6 +116,7 @@ class Session:
         items: List[VisibleObj] = []  # TODO item support
 
         payload = UpdatePlace(
+            address=place.address,  # TODO don't send every time
             title=place.title if changes & ChangeFlags.DETAILS else None,
             header=place.header if changes & ChangeFlags.DETAILS else None,
             passages=passages,

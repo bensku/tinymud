@@ -15,16 +15,6 @@ async def get_index(request: Request) -> FileResponse:
     return FileResponse(assets_path / 'pages' / 'index.html')
 
 
-@routes.get('/app.js')
-async def get_app(request: Request) -> FileResponse:
-    return FileResponse(client_path / 'dist' / 'app.js')
-
-
-@routes.get('/app.js.map')
-async def get_app_map(request: Request) -> FileResponse:
-    return FileResponse(client_path / 'dist' / 'app.js.map')
-
-
 routes.static('/app', client_path / 'dist' / 'app')
 routes.static('/pages', assets_path / 'pages')
 routes.static('/styles', assets_path / 'styles')

@@ -1,20 +1,28 @@
 import { createCharacter } from "../character";
-import { BACKEND_URL } from "../common";
 import { GameView } from "./view";
 import { changePage } from "../pages";
-import { ClientMessage, GameSocket, openGameSocket, ServerMessage } from "../socket";
-import { CreateCharacter } from "./message";
+import { GameSocket, openGameSocket, ServerMessage } from "../socket";
+import { ClientConfig, CreateCharacter, UpdateCharacter, UpdatePlace } from "./message";
 
+let config: ClientConfig;
 let view: GameView;
 let ws: GameSocket;
+
+/**
+ * User roles, sent by backend in a bit set.
+ */
+export enum UserRoles {
+    PLAYER = 1,
+    EDITOR = 2
+}
 
 async function handleReceivedMsg(msg: ServerMessage) {
     switch (msg.type) {
         case 'UpdatePlace':
-            view.updatePlace(msg);
+            view.updatePlace(msg as UpdatePlace);
             break;
         case 'UpdateCharacter':
-            view.updateCharacter(msg);
+            view.updateCharacter(msg as UpdateCharacter);
             break;
     }
 }
@@ -29,6 +37,9 @@ export async function runGame() {
 
 export async function prepareGame() {
     ws = await openGameSocket(); // This logs in (with token, should always succeed)
+
+    // Receive client configuration from server
+    config = await ws.receive('ClientConfig');
 
     // Wait for first message to see if we need to
     // - create a character
@@ -47,5 +58,5 @@ export async function prepareGame() {
 }
 
 export async function gamePageHandler() {
-    view = new GameView(); // Now that page has the needed elements
+    view = new GameView(config, ws); // Now that page has the needed elements
 }

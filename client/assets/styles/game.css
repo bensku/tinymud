@@ -21,3 +21,11 @@ body {
     grid-area: place;
     max-width: 900px;
 }
+
+#place-editor {
+    display: none;
+}
+
+#place-save-button {
+    display: none;
+}

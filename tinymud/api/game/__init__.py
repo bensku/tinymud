@@ -4,6 +4,7 @@ from aiohttp.web import Application, Request, RouteTableDef, WebSocketResponse, 
 
 from loguru import logger
 
+from .message import ClientConfig, handle_client_msg
 from .session import Session, create_character
 from tinymud.api.auth import validate_token
 from tinymud.world import Character, User
@@ -23,6 +24,12 @@ async def game_ws(request: Request) -> WebSocketResponse:
     session = Session(user, ws)
     logger.debug(f"User '{user.name}' connected (WebSocket)")
 
+    # Send configuration (currently, user roles) to client
+    # It will know not to e.g. render admin features to normal users
+    # (though obviously we check all API calls here in backend, too)
+    config = ClientConfig(roles=user.roles)
+    await session.send_msg(config)
+
     # TODO character select screen (full multi character support)
     character = await Character.select(Character.c().owner == user.id)
     if not character:
@@ -39,8 +46,7 @@ async def game_ws(request: Request) -> WebSocketResponse:
             logger.debug(f"User '{user.name}' disconnected")
             return ws
 
-        type_id = msg.type
-
+        await handle_client_msg(session, msg.json())
 
     return ws
 

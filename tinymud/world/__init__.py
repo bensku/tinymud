@@ -3,10 +3,10 @@ from .character import Character, CharacterTemplate
 from .gameobj import GameObj
 from .item import Item, ItemTemplate
 from .place import ChangeFlags, Passage, Place
-from .user import User
+from .user import User, UserRoles
 
 __all__ = ['Character', 'CharacterTemplate',
     'GameObj',
     'Item', 'ItemTemplate',
     'ChangeFlags', 'Passage', 'Place',
-    'User']
+    'User', 'UserRoles']

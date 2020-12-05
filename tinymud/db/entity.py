@@ -34,6 +34,7 @@ class Entity:
     """Base type of all entities."""
     id: int
     _next_id: int
+    _destroyed: bool
 
     # Table schema and SQL queries
     _schema: TableSchema
@@ -64,17 +65,30 @@ class Entity:
         """Called at end of constructor of entity type."""
 
     async def __entity_destroyed__(self) -> None:
-        """Called when this entity is destroyed.
+        """Called immediately before this entity is destroyed.
 
         Note that only deletion from database counts as 'destruction' here.
         Use __del__ if you want to be called every time an entity is unloaded.
         """
-        # TODO implement entity destruction
         pass
+
+    async def destroy(self) -> None:
+        """Destroys this entity and all references to it.
+
+        Attribute _destroyed is set to True to identify objects of destroyed
+        entities. Future changes to them are not saved anywhere.
+        """
+        await self.__entity_destroyed__()
+        self._destroyed = True
+        async with _conn_pool.acquire() as conn:
+            conn.execute(type(self)._sql_delete, self.id)
 
     @classmethod
     async def get(cls: Type[T], id: int) -> Optional[T]:
         """Gets an entity by id."""
+        if id is None:
+            raise ValueError('missing id')
+
         cache: WeakValueDictionary[int, Entity] = cls._entity_cache
         if id in cache:  # Check if our cache has it
             return cast(T, cache[id])
@@ -196,6 +210,7 @@ def entity(entity_type: Type[T]) -> Type[T]:
         old_init(temp_obj, *args, **kwargs)  # type: ignore
         self.__dict__.update(temp_obj.__dict__)
         self.__dict__['id'] = obj_id  # Patch in id too
+        self.__dict__['_destroyed'] = False
 
         # Cache this entity to its type (weakly referenced)
         entity_type._entity_cache[self.id] = self
@@ -294,11 +309,15 @@ async def _save_entities() -> None:
     async with _conn_pool.acquire() as conn:
         while True:
             entity = await _changed_entities.get()  # Block until entity is available
+            if entity._destroyed:
+                continue  # Skip entities that shouldn't be saved
             entity_type = type(entity)
             values = _obj_to_values(entity, entity_type._schema)
             try:
-                await conn.execute(entity_type._sql_update, *values)
-            except:
+                status = await conn.execute(entity_type._sql_update, *values)
+                if status == 'UPDATE 0':
+                    raise AssertionError("UPDATE did not save entity")
+            except Exception:
                 logger.error(f"Saving changes of entity {entity} failed")
                 logger.error(f"values: {values}")
                 logger.error(f"sql: {entity_type._sql_update}")

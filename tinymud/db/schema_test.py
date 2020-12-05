@@ -1,7 +1,15 @@
+from enum import IntFlag, auto
 import textwrap
 from typing import Optional, get_type_hints
 
 import tinymud.db.schema as schema
+
+
+class MyFlag(IntFlag):
+    ALPHA = auto()
+    BETA = auto()
+    GAMMA = auto()
+    ALL = ALPHA | BETA | GAMMA
 
 
 def test_column() -> None:
@@ -11,6 +19,9 @@ def test_column() -> None:
 
     optional = schema.create_column('optional', Optional[int])
     assert optional['db_type'] == {'name': 'integer', 'nullable': True, 'foreign_key': None}
+
+    flag = schema.create_column('flag', MyFlag)
+    assert flag['db_type'] == {'name': 'integer', 'nullable': False, 'foreign_key': None}
 
 
 class DummyType:
@@ -47,7 +58,7 @@ def test_table_schema() -> None:
 def test_create_table() -> None:
     stmt = schema.get_create_table(schema.new_table_schema('FooTable', sample_fields))
     expected = textwrap.dedent("""    CREATE TABLE FooTable (
-    id integer NOT NULL,
+    id integer PRIMARY KEY,
     flag boolean NOT NULL,
     name text NOT NULL,
     table_ref integer NOT NULL,
@@ -58,13 +69,16 @@ def test_create_table() -> None:
 
 def test_post_create() -> None:
     stmt = schema.get_post_create(schema.new_table_schema('FooTable', sample_fields))
-    assert stmt == ['ALTER TABLE FooTable ADD FOREIGN KEY (table_ref) REFERENCES tinymud_dummytype(id)']
+    assert stmt == [
+        'ALTER TABLE FooTable DROP CONSTRAINT IF EXISTS fk_table_ref',
+        ('ALTER TABLE FooTable ADD CONSTRAINT fk_table_ref FOREIGN KEY (table_ref) '
+            'REFERENCES tinymud_dummytype(id) ON DELETE CASCADE')
+    ]
 
 
 def test_schema_update() -> None:
     old_fields = sample_fields
     new_fields = {
-        'id': int,
         'weight': Optional[float],
         'flag': bool,
         'new_field': str
@@ -74,7 +88,7 @@ def test_schema_update() -> None:
 
     # Is the new schema correct?
     expected = textwrap.dedent("""    CREATE TABLE FooTable (
-    id integer NOT NULL,
+    id integer PRIMARY KEY,
     flag boolean NOT NULL,
     weight double precision,
     new_field text NOT NULL
