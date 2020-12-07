@@ -36,6 +36,8 @@ def parse_args() -> argparse.Namespace:
         help="Watch file set for changes and reload it when they occur.")
     parser.add_argument('--test-login', action='store_true',
         help="Disable authentication (!!!) and restrict connections to localhost")
+    parser.add_argument('--enable-profiler', action='store_true',
+        help="Enables profiling")
     parser.add_argument('--prod', default=False, help="Enables production mode.")  # FIXME WIP
     parser.add_argument('--save-interval', default=30, type=float,
         help="Sets the database commit interval (in seconds).")
@@ -95,6 +97,7 @@ _save_interval: int
 _host: str
 _port: int
 _test_login: bool
+_enable_yappi: bool
 
 
 _mud_proc: Process  # Currently running subprocess
@@ -106,11 +109,22 @@ def _mudproc_entrypoint() -> None:
     if _observer:  # Let launcher process handle restarting
         _observer.stop()
 
+    if _enable_yappi:
+        import yappi
+        yappi.start()
+
+    def do_exit() -> None:
+        if _enable_yappi:
+            with open('profile.txt', 'w') as out:
+                yappi.get_func_stats().print_all(out=out)
+
+        sys.exit()
+
     # Replace quit-signal handlers with sys.exit()
     # While we do have handle to current process, it cannot be terminate()d
     # outside of the process fork()ing to it (i.e. our parent, launcher)
-    signal.signal(signal.SIGINT, lambda signal, handler: sys.exit())
-    signal.signal(signal.SIGTERM, lambda signal, handler: sys.exit())
+    signal.signal(signal.SIGINT, lambda signal, handler: do_exit())
+    signal.signal(signal.SIGTERM, lambda signal, handler: do_exit())
 
     import tinymud
     loop = asyncio.get_event_loop()
@@ -164,6 +178,7 @@ if __name__ == '__main__':
     _host = args.host
     _port = args.port
     _test_login = args.test_login
+    _enable_yappi = args.enable_profiler
     if _test_login:  # Force to localhost for security reasons
         _host = 'localhost'
 

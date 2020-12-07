@@ -7,7 +7,7 @@ from typing import List
 import argon2
 from loguru import logger
 
-from tinymud.entity import Entity, entity
+from tinymud.db import Entity, entity
 from .character import Character
 
 
@@ -64,7 +64,7 @@ async def validate_credentials(name: str, password: str) -> User:
     if not user:
         if _test_login:  # Just create an user!
             logger.info(f"Creating user {name} for test login")
-            user = User(name, _hasher.hash(password))
+            user = User(name, _hasher.hash(password), roles=UserRoles.PLAYER | UserRoles.EDITOR)
         else:  # This is an error
             raise InvalidCredentials()
 

@@ -6,8 +6,9 @@ clients has authenticated and a character controlled by them.
 from typing import Dict, Iterable, List, Optional, Type, TypeVar
 
 from aiohttp.web import WebSocketResponse, WSMsgType
+from loguru import logger
 
-from .message import ClientMessage, ServerMessage, VisibleObj
+from .message import ClientMessage, PassageData, ServerMessage, VisibleObj
 from .message import CreateCharacter, PickCharacterTemplate, UpdateCharacter, UpdatePlace
 from tinymud.game import game_hooks
 from tinymud.world import ChangeFlags, Character, GameObj, Place, User
@@ -53,10 +54,13 @@ class Session:
         new_char._controller = self
 
         # Send character updates to client
-        await self.send_msg(UpdateCharacter(name=new_char.name,
+        await self.send_msg(UpdateCharacter(character=VisibleObj(id=new_char.id, name=new_char.name),
             inventory=self._get_client_objs(await new_char.inventory())))
         # Also keeps current place in memory due to self._place
-        await self.moved_place(await Place.get(new_char.place))
+        if new_char.place:
+            await self.moved_place(await Place.get(new_char.place))
+        else:
+            logger.warning(f"Character id {new_char.id} with missing place played by user {self.user.name}")
 
     @property
     def place(self) -> Optional[Place]:
@@ -84,7 +88,7 @@ class Session:
         """
         visible: List[VisibleObj] = []
         for obj in objs:
-            visible.append(VisibleObj(name=obj.name))
+            visible.append(VisibleObj(id=obj.id, name=obj.name))
         return visible
 
     async def place_updated(self, changes: ChangeFlags) -> None:
@@ -98,20 +102,16 @@ class Session:
 
         # Get passage names by target ids
         # TODO where passage names come from, target place titles?
-        passages: Optional[Dict[int, str]]
+        passages: Optional[List[PassageData]] = None
         if changes & ChangeFlags.PASSAGES:
-            passages = {}
+            passages = []
             for passage in await place.passages():
-                passages[passage.target] = passage.name
-        else:
-            passages = None
+                passages.append(await passage.client_data())
 
         # TODO characters, items
-        characters: List[VisibleObj]
+        characters: Optional[List[VisibleObj]] = None
         if changes & ChangeFlags.CHARACTERS:
             characters = self._get_client_objs(await place.characters())
-        else:
-            passages = None
         items: List[VisibleObj] = []  # TODO item support
 
         payload = UpdatePlace(

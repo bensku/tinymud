@@ -11,7 +11,7 @@ interface Token {
 /**
  * Token with plain-text value and empty content.
  */
-interface TextToken extends Token {
+export interface TextToken extends Token {
     type: 'text';
     value: string;
 }
@@ -19,14 +19,14 @@ interface TextToken extends Token {
 /**
  * A paragraph token.
  */
-interface ParagraphToken extends Token {
+export interface ParagraphToken extends Token {
     type: 'paragraph';
 }
 
 /**
  * Token that applies a style to its content.
  */
-interface StyleToken extends Token {
+export interface StyleToken extends Token {
     type: 'style';
     style: 'em' | 'strong';
 }
@@ -34,7 +34,7 @@ interface StyleToken extends Token {
 /**
  * Link to another passage.
  */
-interface PassageLinkToken extends Token {
+export interface PassageLinkToken extends Token {
     type: 'passage';
     address: string;
 }
@@ -215,6 +215,18 @@ export function parseDocument(input: ParserInput | string): ParagraphToken[] {
     return paragrapgs;
 }
 
+/**
+ * Visits given tokens and all tokens contained by them.
+ * @param tokens Tokens to use as starting points.
+ * @param visitor Visitor function.
+ */
+export function visit(tokens: Token[], visitor: (token: Token) => void) {
+    for (const token of tokens) {
+        visitor(token);
+        visit(token.content, visitor);
+    }
+}
+
 function renderToken(token: Token): string {
     switch (token.type) {
         case 'text':
@@ -231,7 +243,7 @@ function renderToken(token: Token): string {
             }
         case 'passage':
             const passage = token as PassageLinkToken;
-            return `<a href="javascript:void" passage-to="${passage.address}>${render(passage.content)}</a>"`
+            return `<a class="passage-link" href="${passage.address}">${render(passage.content)}</a>`
         default:
             throw new Error(`unknown token type ${token.type}`);
     }

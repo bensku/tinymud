@@ -2,7 +2,7 @@
 
 import asyncio
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Type, Set, TypeVar, cast
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Type, Set, TypeVar, cast
 from weakref import WeakValueDictionary
 
 from asyncpg import Connection, Record
@@ -31,6 +31,7 @@ T = TypeVar('T', bound='Entity')
 class Entity:
     """Base type of all entities."""
     id: int
+    _t: str
     _next_id: int
     _destroyed: bool
 
@@ -57,7 +58,6 @@ class Entity:
         if you want that, __post_init__ of dataclasses should do the trick.
         It also gets called immediately after constructor sychronously.
         """
-        pass
 
     def __object_created__(self) -> None:
         """Called at end of constructor of entity type."""
@@ -68,7 +68,6 @@ class Entity:
         Note that only deletion from database counts as 'destruction' here.
         Use __del__ if you want to be called every time an entity is unloaded.
         """
-        pass
 
     async def destroy(self) -> None:
         """Destroys this entity and all references to it.
@@ -80,13 +79,13 @@ class Entity:
         self._destroyed = True
 
         # Queue destruction (no reference to self being destroyed)
-        _db_queue.queue_write(None, type(self)._sql_delete, self.id)
+        _db_queue.queue_write(None, type(self)._sql_delete, [self.id])
         await _db_queue.wait_for_writes()  # Wait for deletion to complete
         # __entity_destroyed__ is async, and it would be confusing if await
         # didn't actually wait for references to this to be gone
 
     @classmethod
-    async def get(cls: Type[T], id: int) -> Optional[T]:
+    async def get(cls: Type[T], id: schema.Foreign[T]) -> T:
         """Gets an entity by id."""
         if id is None:
             raise ValueError('missing id')
@@ -96,11 +95,14 @@ class Entity:
 
         cache: WeakValueDictionary[int, Entity] = cls._entity_cache
         if id in cache:  # Check if our cache has it
-            return cast(T, cache[id])
+            return cast(T, cache[cast(int, id)])
         query = cls._sql_select + ' WHERE id = $1'
         async with _conn_pool.acquire() as conn:
             record = await conn.fetchrow(query, id)
-        return _record_to_obj(cls, record) if record else None
+        result = cls.from_record(record)
+        if not result:
+            raise ValueError('invalid foreign key')
+        return result
 
     @classmethod
     def c(cls: Type[T]) -> T:
@@ -142,7 +144,7 @@ class Entity:
                 if entity_id in cache:  # Use cached entity if possible
                     entities.append(cache[entity_id])
                 else:  # Not found, actually convert record to entity
-                    entities.append(_record_to_obj(cls, record))
+                    entities.append(cls.from_record(record))
         return cast(List[T], entities)
 
     @classmethod
@@ -151,12 +153,16 @@ class Entity:
         results = await cls.select_many(*args)
         return results[0] if len(results) > 0 else None
 
+    @classmethod
+    def from_record(cls: Type[T], record: Record) -> T:
+        """Converts a database record (row) to entity of this type."""
+        # Pass all values (including id) to constructor as named arguments
+        return cls(**dict(record.items()))  # type: ignore
 
-def _record_to_obj(py_type: Type[T], record: Record) -> T:
-    """Converts a database record (row) to entity of given type."""
-    # Pass all values (including id) to constructor as named arguments
-    obj = py_type(**dict(record.items()))  # type: ignore
-    return obj
+    @classmethod
+    def from_dict(cls: Type[T], d: Dict[str, Any]) -> T:
+        """Converts dictionary to an entity."""
+        return cls(**d)  # type: ignore
 
 
 def _obj_to_values(obj: Entity, table: TableSchema) -> List[Any]:
@@ -229,7 +235,12 @@ def entity(entity_type: Type[T]) -> Type[T]:
             self.__object_created__()
 
         if new_entity:  # Queue for creation in database
-            _db_queue.queue_write(self, entity_type._sql_insert, _obj_to_values(self, entity_type._schema))
+            async def create_hook() -> bool:
+                """Calls entity created hook and permits execution."""
+                await self.__entity_created__()
+                return True
+
+            _db_queue.queue_write(create_hook, entity_type._sql_insert, _obj_to_values(self, entity_type._schema))
     setattr(entity_type, '__init__', new_init)
 
     # Create cache (mainly to avoid duplicated entities in memory)
@@ -268,6 +279,9 @@ async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool)
         table = schema.new_table_schema(schema.new_table_name(entity_type), fields)
         entity_type._schema = table
 
+        # Inject table name (used by manual fetch()es)
+        entity_type._t = table['name']
+
         # Figure out CREATE TABLE, INSERT, SELECT, UPDATE and DELETE
         entity_type._sql_insert = schema.get_sql_insert(table)
         entity_type._sql_select = schema.get_sql_select(table['name'])
@@ -286,7 +300,12 @@ async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool)
             if not key.startswith('_'):  # Ignore non-DB fields
                 # Queue to be saved and prevent GC before that happens
                 self_type = type(self)  # NOTE: entity_type local variable is mutated, don't use here
-                _db_queue.queue_write(self, self_type._sql_update, _obj_to_values(self, self_type._schema))
+
+                async def modify_hook() -> bool:
+                    """Permits entity modifications if it has not been deleted."""
+                    return not self._destroyed
+
+                _db_queue.queue_write(modify_hook, self_type._sql_update, _obj_to_values(self, self_type._schema))
         setattr(entity_type, '__setattr__', mark_changed)
         # Queue table to be created/migrated
         await migrator.add_table(entity_type._schema)
@@ -324,3 +343,21 @@ async def init_entity_system(conn_pool: Pool, db_data: Path, prod_mode: bool, sa
         async with conn.transaction():  # Either all migrations work, or none do
             await _async_init_entities(conn, db_data, prod_mode)
     _async_init_needed.clear()
+
+
+async def execute(query: str, args: List[Any]) -> None:
+    """Executes SQL statement after queued writes."""
+    # Could optimize this to submit only one task and use callback to complete future
+    _db_queue.queue_write(None, query, args)
+    await _db_queue.wait_for_writes()
+
+
+async def fetch(query: str, *args: Any) -> Iterable[Record]:
+    """Executes an SQL query.
+
+    This is sometimes useful for "advanced" queries such as SELECTs with JOINs.
+    See asyncpg documentation for more details.
+    """
+    await _db_queue.wait_for_writes()
+    async with _conn_pool.acquire() as conn:
+        return await conn.fetch(query, *args)

@@ -5,6 +5,7 @@ import { ClientMessage, ServerMessage } from "../socket";
  * An object we can show to player.
  */
 interface VisibleObj {
+    id: number;
     name: string;
 }
 
@@ -16,13 +17,13 @@ export interface UpdatePlace extends ServerMessage {
     address: string;
     title?: string;
     header?: string;
-    passages?: Record<number, string>;
+    passages?: PassageData[];
     characters?: VisibleObj[];
     items?: VisibleObj[];
 }
 
 export interface UpdateCharacter extends ServerMessage {
-    name?: string;
+    character: VisibleObj;
     inventory?: VisibleObj[];
 }
 
@@ -35,16 +36,28 @@ export interface PickCharacterTemplate extends ClientMessage {
     selected: number
 }
 
-export interface PlaceEditMessage extends ClientMessage {
+export interface EditorTeleport extends ClientMessage {
+    character: number;
+    address: string;
+}
+
+export interface PassageData {
+    address: string;
+    name?: string;
+    hidden: boolean;
+}
+
+export interface EditorPlaceEdit extends ClientMessage {
     address: string;
     title: string;
     header: string;
+    passages: PassageData[]
 }
 
-export interface PlaceCreateMessage extends ClientMessage {
+export interface EditorPlaceCreate extends ClientMessage {
     address: string;
 }
 
-export interface PlaceDestroyMessage extends ClientMessage {
+export interface EditorPlaceDestroy extends ClientMessage {
     address: string;
 }

@@ -7,18 +7,15 @@ reads. It also allows database access in non-async code.
 
 from asyncio import AbstractEventLoop, Future, Queue, get_event_loop
 from dataclasses import dataclass
-from typing import Any, List, Optional, Union, TYPE_CHECKING
+from typing import Any, Awaitable, Callable, List, Optional, Union
 
 from asyncpg import Connection
-
-if TYPE_CHECKING:
-    from .entity import Entity
 
 
 @dataclass
 class _DbRequest:
     """Request to database."""
-    obj_ref: Optional['Entity']
+    callback: Optional[Callable[[], Awaitable[bool]]]
     sql: str
     params: List[Any]
 
@@ -32,13 +29,13 @@ class DbQueue:
         self._loop = get_event_loop()
         self._queue = Queue()
 
-    def queue_write(self, obj_ref: Optional['Entity'], sql: str, params: List[Any]) -> None:
+    def queue_write(self, callback: Optional[Callable[[], Awaitable[bool]]], sql: str, params: List[Any]) -> None:
         """Queues a write operation to database.
 
-        First parameter (obj_ref) is used to avoid executing SQL to write
-        deleted entities. Leave empty if you don't want that.
+        The callback is executed immediately before the write would be sent
+        to database. Returning false discards the write.
         """
-        self._queue.put_nowait(_DbRequest(obj_ref, sql, params))
+        self._queue.put_nowait(_DbRequest(callback, sql, params))
 
     def wait_for_writes(self) -> Future[None]:
         """Creates a future that will complete after current writes.
@@ -59,8 +56,9 @@ class DbQueue:
         while True:
             entry = await self._queue.get()
             if isinstance(entry, _DbRequest):  # Execute SQL write
-                # But don't do it if entity it is associated with has been destroyed
-                if not entry.obj_ref or not entry.obj_ref._destroyed:
+                # Execute callback if it exists
+                if entry.callback is None or await entry.callback():
+                    # If callback did not exist or returned True, proceed to execute SQL
                     await conn.execute(entry.sql, *entry.params)
             else:  # Just complete futures once we reach them
                 entry.set_result(None)

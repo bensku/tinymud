@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Type, TYPE_CHECKING
 
-from tinymud.entity import Foreign, entity
+from tinymud.db import Foreign, entity
 from .gameobj import GameObj, ObjType, Placeable, _docstring_extract, _register_obj_type
 if TYPE_CHECKING:
     from .item import Item, ItemTemplate
@@ -63,8 +63,13 @@ class Character(GameObj, Placeable):
             await self._controller.moved_place(to_place)
 
     async def move(self, place: 'Place') -> None:
-        """Moves this character to a place."""
+        """Moves this character to a place.
+
+        Note that directly moving a character based on untrusted input is
+        not exactly a great idea. Use place.use_passage() instead.
+        """
         place_id = self.place
+        old_place: Optional[Place]
         if place_id:  # Initially, a new character has no place
             old_place = await Place.get(place_id)
         else:
@@ -84,5 +89,5 @@ class Character(GameObj, Placeable):
 
 
 # FIXME import order hack :(
-from .item import Item
-from .place import ChangeFlags
+from .item import Item  # noqa
+from .place import ChangeFlags, Place  # noqa

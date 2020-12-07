@@ -2,11 +2,14 @@
 
 from dataclasses import dataclass, field
 import inspect
-from typing import Dict, List, Optional, Tuple, Type
+from typing import Dict, List, Optional, Tuple, Type, TYPE_CHECKING
 
 from loguru import logger
 
-from tinymud.entity import Entity, Foreign, entity
+from tinymud.db import Entity, Foreign, entity
+if TYPE_CHECKING:
+    from .character import Character
+    from .place import Place
 
 
 @dataclass

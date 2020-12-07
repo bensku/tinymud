@@ -8,10 +8,11 @@ from typing import Dict, List, Optional, ValuesView
 from weakref import ReferenceType, ref
 
 from loguru import logger
+from pydantic import BaseModel
 
-from tinymud.entity import Foreign, Entity, entity
+from tinymud.db import Foreign, Entity, entity, execute, fetch
 from .character import Character
-from .gameobj import GameObj, Placeable
+from .gameobj import Placeable
 from .item import Item
 
 
@@ -24,6 +25,7 @@ class _CachedPlace:
     unloaded by GC.
     """
     characters: Dict[int, Character]
+    passages: Dict[str, 'Passage']
 
 
 class ChangeFlags(Flag):
@@ -71,15 +73,30 @@ class Place(Entity):
     async def make_cache(self) -> None:
         if self._cache_done:
             return  # Cache already created
-        # Create cache of this place
+
+        # Load all characters (by their ids)
         characters = {}
         for character in await Character.select_many(Character.c().place == self.id):
             characters[character.id] = character
-        self._cache = _CachedPlace(characters)
+
+        # Load all passages (by their target addresses)
+        # Avoid unnecessary queries later by doing unnecessarily complex query tricks
+        # Totally not premature optimization (hmm)
+        passages = {}
+        for record in await fetch(('SELECT passage.id id, passage.target target, passage.hidden hidden,'
+                ' place.address as _address, place.title _place_title'
+                f' FROM {Passage._t} passage JOIN {Place._t} place'
+                ' ON target = place.id WHERE passage.place = $1'), self.id):
+            passage = Passage.from_record(record)
+            passage._cache_done = True  # We provided extra values in constructor
+            passages[passage._address] = passage
+
+        self._cache = _CachedPlace(characters, passages)
         self._cache_done = True
 
-    async def passages(self) -> List['Passage']:
-        return await Passage.select_many(Passage.c().place == self.id)
+    async def passages(self) -> ValuesView['Passage']:
+        await self.make_cache()
+        return self._cache.passages.values()
 
     async def items(self) -> List[Item]:
         return await Item.select_many(Item.c().place == self.id)
@@ -87,6 +104,33 @@ class Place(Entity):
     async def characters(self) -> ValuesView[Character]:
         await self.make_cache()
         return self._cache.characters.values()
+
+    async def update_passages(self, passages: List['PassageData']) -> None:
+        """Updates passages leaving from this place."""
+        await self.make_cache()
+        # Delete previous passages
+        await execute(f'DELETE FROM {Passage._t} WHERE id = $1', [self.id])
+        self._cache.passages = {}
+
+        # Create new passages
+        for passage in passages:
+            target = await Place.from_addr(passage.address)
+            if not target:
+                logger.warning(f"Passage to missing place {passage.address}")
+                continue  # Missing passage, TODO user feedback
+            entity = Passage(self.id, target.id, passage.name, passage.hidden,
+                _cache_done=True, _address=passage.address, _place_title=target.title)
+            self._cache.passages[target.address] = entity
+
+        # Update to clients
+        self._changes |= ChangeFlags.PASSAGES
+
+    async def use_passage(self, character: Character, address: str) -> None:
+        await self.make_cache()
+        if address not in self._cache.passages:
+            raise ValueError(f'no passage from {self.address} to {address}')
+        to_place = await Place.get(self._cache.passages[address].target)
+        await character.move(to_place)
 
     async def on_tick(self, delta: float) -> None:
         """Called when this place is ticked.
@@ -118,21 +162,54 @@ class Place(Entity):
         self._changes |= ChangeFlags.CHARACTERS
 
 
+class PassageData(BaseModel):
+    """Passage data sent by client."""
+    address: str
+    name: Optional[str]
+    hidden: bool
+
+
 @entity
-class Passage(GameObj, Placeable):
+@dataclass
+class Passage(Placeable, Entity):
     """A passage from place to another.
 
     A single passage can only be entered from the room it is placed to.
     If bidirectional movement is needed, both rooms should get a passage.
+
+    Passages can be named, but by default they inherit names of their targets.
+    Note that text shown inside place header is usually different. For
+    passages hidden from exit list, names are never shown to players.
     """
     target: Foreign[Place]
+    name: Optional[str]
+    hidden: bool
 
-    async def enter(self, character: Character) -> None:
-        """Makes given character enter this passage."""
-        if character.place != self.id:
-            raise ValueError(f"character id {character.id} is not in place {self.address}")
-        character.on_move(await Place.get(character.place), await Place.get(self.target))
-        character.place = self.target
+    # Some cached data from other places
+    # Note that usually place caching queries them with one SELECT
+    _cache_done: bool = False
+    _address: str = ''  # Target address (client deals with addresses, not place ids)
+    _place_title: str = ''
+
+    async def _make_cache(self) -> None:
+        if self._cache_done:
+            return  # Already cached
+        place = await Place.get(self.target)
+        self._address = place.address
+        self._place_title = place.title
+        self._cache_done = True
+
+    async def address(self) -> str:
+        await self._make_cache()
+        return self._address
+
+    async def place_title(self) -> str:
+        await self._make_cache()
+        return self._place_title
+
+    async def client_data(self) -> PassageData:
+        await self._make_cache()
+        return PassageData(address=self._address, name=self.name, hidden=self.hidden)
 
 
 # Places that are currently pending addition to _places
@@ -161,7 +238,7 @@ async def _places_tick(delta: float) -> None:
         place = place_ref()
         if place and not place._destroyed:  # Not GC'd, not destroyed
             await place.on_tick(delta)
-            next_places.append(place_ref)
+            _new_places.append(place_ref)
 
     # Swap to places that still exist (and newly added ones)
     _places = _new_places  # And previous _places is deleted

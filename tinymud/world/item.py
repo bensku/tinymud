@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Callable, Type, Union, TYPE_CHECKING
 
-from tinymud.entity import entity
+from tinymud.db import entity
 from .character import Character
 from .gameobj import Carriable, GameObj, ObjType, Placeable, _docstring_extract, _register_obj_type
 if TYPE_CHECKING:

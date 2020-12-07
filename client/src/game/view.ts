@@ -1,10 +1,11 @@
 import CodeMirror from 'codemirror';
-import { parseDocument, renderHtml, renderText } from "../render";
+import { PassageLinkToken, parseDocument, renderHtml, renderText, visit } from "../render";
 import { GameSocket } from '../socket';
 import { UserRoles } from './main';
-import { ClientConfig, PlaceEditMessage, UpdateCharacter, UpdatePlace } from "./message";
+import { ClientConfig, EditorPlaceCreate, EditorPlaceDestroy, EditorPlaceEdit, EditorTeleport, PassageData, UpdateCharacter, UpdatePlace } from "./message";
 
-class Sidebar {
+class Character {
+    id: number = -1;
     characterName = document.getElementById('char-name')!;
 }
 
@@ -20,42 +21,89 @@ class Place {
 }
 
 class PlaceEditor {
-    address = document.getElementById('place-address')!;
+    createButton = document.getElementById('place-create-button')!;
+    deleteButton = document.getElementById('place-delete-button')!;
     editButton = document.getElementById('place-edit-button')!;
     saveButton = document.getElementById('place-save-button')!;
+    address = document.getElementById('place-address')!;
 
     headerEditor: CodeMirror.Editor | undefined;
+    createPlace: boolean = false;
 
     display(): void {
         document.getElementById('place-editor')!.style.display = 'block';
     }
 
-    enable(place: Place): void {
+    enable(place: Place, create: boolean): void {
+        // If we're creating a new place, allow editing address
+        let titleText;
+        let headerText;
+        if (create) {
+            this.createPlace = true;
+            this.address.outerHTML = `<input id="place-address" type="text" placeholder="place.address">`;
+            this.address = document.getElementById('place-address')!;
+
+            // Also don't pre-fill title or header
+            titleText = '';
+            headerText = '';
+        } else {
+            // Pre-fill with current content
+            titleText = renderText(place.title.innerText);
+            headerText = renderText(place.headerText);
+        }
+
         // Make title editable
-        const titleText = renderText(place.title.innerText);
         place.title.outerHTML = `<input id="place-title" type="text" value="${titleText}">`;
         place.title = document.getElementById('place-title')!;
 
         // Replace header with CodeMirror editor
-        place.header.innerHTML = '';
-        const headerText = renderText(place.headerText);
+        place.header.innerHTML = ''; // This would display above CodeMirror
         this.headerEditor = CodeMirror(place.header, {
-            value: headerText
+            value: headerText,
+            lineWrapping: true
             //mode: 'markdown' // TODO tinymud format is not exactly markdown
             // ... should define a custom grammar instead
+            // TODO markdown doesn't work, issues with bundler
         });
-        // TODO codemirror styles
 
         // Swap edit with save button
         this.editButton.style.display = 'none';
         this.saveButton.style.display = 'inline-block';
     }
 
-    async finish(place: Place, ws: GameSocket): Promise<void> {
+    finish(place: Place, character: Character, ws: GameSocket): void {
+        if (this.createPlace) {
+            const address = (this.address as HTMLInputElement).value;
+            if (address == '') {
+                alert('Place address needed.');
+                return;
+            }
+            // Swap back normal address element
+            this.address.outerHTML = `<code id="place-address">${address}</code>`;
+            this.address = document.getElementById('place-address')!;
+            
+            // Create empty place, we'll update the content later
+            const createMsg: EditorPlaceCreate = {
+                type: 'EditorPlaceCreate',
+                address: address
+            };
+            ws.send(createMsg);
+            this.createPlace = false; // Until we create another place
+
+            // Move ourself to the new place
+            const teleportMsg: EditorTeleport = {
+                type: 'EditorTeleport',
+                character: character.id,
+                address: address
+            }
+            ws.send(teleportMsg);
+        }
+
         // Collect changes from input fields
         const title = (place.title as HTMLInputElement).value;
         const header = this.headerEditor!.getValue();
-        const headerHtml = renderHtml(parseDocument(header));
+        const headerTokens = parseDocument(header);
+        const headerHtml = renderHtml(headerTokens);
 
         // Replace input input fields with original elements
         // TODO don't duplicate code with game.html AND updatePlace()
@@ -66,42 +114,67 @@ class PlaceEditor {
         place.header = document.getElementById('place-header')!;
         place.headerText = header; // In case this is edited again
 
+        // Compute passages by visiting parsed header tokens
+        const passages: PassageData[] = [];
+        visit(headerTokens, (token) => {
+            if (token.type == 'passage') {
+                const link = token as PassageLinkToken;
+                // TODO name/hidden support
+                passages.push({address: link.address, name: undefined, hidden: false});
+            }
+        });
+
         // Tell the server about changes
-        const msg: PlaceEditMessage = {
-            type: 'PlaceEditMessage',
+        const msg: EditorPlaceEdit = {
+            type: 'EditorPlaceEdit',
             address: this.address.innerText,
             title: title,
-            header: header
-        }
-        await ws.send(msg);
+            header: header,
+            passages: passages
+        };
+        ws.send(msg);
 
         // Swap edit button back
         this.editButton.style.display = 'inline-block';
         this.saveButton.style.display = 'none';
+    }
+
+    delete(place: Place, ws: GameSocket): void {
+        if (!confirm(`Deleting place '${place.title.innerText}. Are you sure?'`)) {
+            return; // User canceled
+        }
+        const msg: EditorPlaceDestroy = {
+            type: 'EditorPlaceDestroy',
+            address: this.address.innerText
+        }
+        ws.send(msg);
     }
 }
 
 export class GameView {
     private config: ClientConfig;
 
-    private sidebar;
+    private character;
     private place;
     private editor: PlaceEditor | undefined;
 
     constructor(config: ClientConfig, ws: GameSocket) {
         this.config = config;
-        this.sidebar = new Sidebar();
+        this.character = new Character();
         this.place = new Place();
 
         // Enable editor functionality only for... editors
-        if ((config.roles & UserRoles.EDITOR) == 0) {
+        if ((config.roles & UserRoles.EDITOR) != 0) {
             const editor = new PlaceEditor();
             this.editor = editor;
             editor.display();
 
             // Both edit and save buttons are never visible simultaneously
-            editor.editButton.addEventListener('click', (event) => editor.enable(this.place));
-            editor.saveButton.addEventListener('click', async (event) => await editor.finish(this.place, ws));
+            editor.editButton.addEventListener('click', (event) => editor.enable(this.place, false));
+            editor.saveButton.addEventListener('click', (event) => editor.finish(this.place, this.character, ws));
+
+            editor.createButton.addEventListener('click', (event) => editor.enable(this.place, true));
+            editor.deleteButton.addEventListener('click', (event) => editor.delete(this.place, ws));
         }
     }
 
@@ -120,8 +193,7 @@ export class GameView {
     }
 
     updateCharacter(msg: UpdateCharacter) {
-        if (msg.name) {
-            this.sidebar.characterName.innerText = msg.name;
-        }
+        this.character.id = msg.character.id;
+        this.character.characterName.innerText = renderText(msg.character.name);
     }
 }
