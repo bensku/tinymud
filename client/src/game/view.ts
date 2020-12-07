@@ -2,7 +2,7 @@ import CodeMirror from 'codemirror';
 import { PassageLinkToken, parseDocument, renderHtml, renderText, visit } from "../render";
 import { GameSocket } from '../socket';
 import { UserRoles } from './main';
-import { ClientConfig, EditorPlaceCreate, EditorPlaceDestroy, EditorPlaceEdit, EditorTeleport, PassageData, UpdateCharacter, UpdatePlace } from "./message";
+import { ClientConfig, EditorPlaceCreate, EditorPlaceDestroy, EditorPlaceEdit, EditorTeleport, PassageData, UpdateCharacter, UpdatePlace, UsePassage } from "./message";
 
 class Character {
     id: number = -1;
@@ -153,6 +153,7 @@ class PlaceEditor {
 
 export class GameView {
     private config: ClientConfig;
+    private ws: GameSocket;
 
     private character;
     private place;
@@ -160,6 +161,7 @@ export class GameView {
 
     constructor(config: ClientConfig, ws: GameSocket) {
         this.config = config;
+        this.ws = ws;
         this.character = new Character();
         this.place = new Place();
 
@@ -189,6 +191,26 @@ export class GameView {
             this.place.headerText = msg.header; // For editing with CodeMirror only
             // Render to safe HTML
             this.place.header.innerHTML = renderHtml(parseDocument(msg.header));
+        }
+        const passages: Record<string, PassageData> = {};
+        for (const passage of msg.passages ?? []) {
+            passages[passage.address] = passage;
+        }
+
+        const links = document.getElementsByClassName('passage-link');
+        for (const link of links) {
+            const passage = passages[link.getAttribute('href')!];
+            link.addEventListener('click', (event) => {
+                event.preventDefault(); // That page doesn't actually exist
+                if (passage) {
+                    const msg: UsePassage = {
+                        type: 'UsePassage',
+                        address: passage.address
+                    };
+                    this.ws.send(msg)
+                }
+                // TODO maybe color nonexisting passage in red for admins?
+            });
         }
     }
 

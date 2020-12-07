@@ -3,15 +3,15 @@
 A session consists of a WebSocket connection to a client, an user that the
 clients has authenticated and a character controlled by them.
 """
-from typing import Dict, Iterable, List, Optional, Type, TypeVar
+from typing import Iterable, List, Optional, Type, TypeVar
 
 from aiohttp.web import WebSocketResponse, WSMsgType
 from loguru import logger
 
-from .message import ClientMessage, PassageData, ServerMessage, VisibleObj
+from .message import ClientMessage, ServerMessage, VisibleObj
 from .message import CreateCharacter, PickCharacterTemplate, UpdateCharacter, UpdatePlace
 from tinymud.game import game_hooks
-from tinymud.world import ChangeFlags, Character, GameObj, Place, User
+from tinymud.world import ChangeFlags, Character, GameObj, PassageData, Place, User
 
 
 T = TypeVar('T', bound=ClientMessage)

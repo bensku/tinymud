@@ -83,8 +83,8 @@ class Place(Entity):
         # Avoid unnecessary queries later by doing unnecessarily complex query tricks
         # Totally not premature optimization (hmm)
         passages = {}
-        for record in await fetch(('SELECT passage.id id, passage.target target, passage.hidden hidden,'
-                ' place.address as _address, place.title _place_title'
+        for record in await fetch(('SELECT passage.id id, passage.place as place, passage.name as name, passage.target target,'
+                ' passage.hidden hidden, place.address _address, place.title _place_title'
                 f' FROM {Passage._t} passage JOIN {Place._t} place'
                 ' ON target = place.id WHERE passage.place = $1'), self.id):
             passage = Passage.from_record(record)
@@ -241,7 +241,7 @@ async def _places_tick(delta: float) -> None:
             _new_places.append(place_ref)
 
     # Swap to places that still exist (and newly added ones)
-    _places = _new_places  # And previous _places is deleted
+    _places = next_places  # And previous _places is deleted
 
 
 async def _places_tick_loop(delta_target: float) -> None:

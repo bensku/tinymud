@@ -36,6 +36,10 @@ export interface PickCharacterTemplate extends ClientMessage {
     selected: number
 }
 
+export interface UsePassage extends ClientMessage {
+    address: string;
+}
+
 export interface EditorTeleport extends ClientMessage {
     character: number;
     address: string;
