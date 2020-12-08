@@ -6,9 +6,10 @@ from typing import TypedDict
 
 from aiohttp.web import Application, Request, Response, RouteTableDef
 import jwt
+from loguru import logger
 from pydantic import BaseModel
 
-from tinymud.world.user import RegistrationFailed, create_user, validate_credentials
+from tinymud.world.user import RegistrationFailed, UserRoles, create_user, validate_credentials
 
 auth_app = Application()
 routes = RouteTableDef()
@@ -49,11 +50,20 @@ async def login(request: Request) -> Response:
 async def register(request: Request) -> Response:
     # Will raise error if user cannot be created
     details = LoginRequest(**await request.json())
+    if len(details.name) > 12:
+        return Response(body="too long username", status=400)
+    if len(details.password) > 100:
+        return Response(body="too long password", status=400)
+
     try:
         user = await create_user(details.name, details.password)
+        # FIXME something more secure than making first user admin
+        if user.id == 1:
+            logger.warning(f"First user '{user.name}'' created, making them an admin")
+            user.roles = UserRoles.PLAYER | UserRoles.EDITOR
     except RegistrationFailed as e:
         return Response(body=str(e), status=409)
-    # TODO make first user have all permissions?
+    logger.debug(f"User '{user.name}' registered")
     return Response()
 
 
