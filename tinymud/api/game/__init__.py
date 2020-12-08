@@ -1,16 +1,30 @@
 """Game-related APIs (mostly Websocket)."""
 
-from aiohttp.web import Application, Request, RouteTableDef, WebSocketResponse, WSMsgType
+from aiohttp.web import Application, json_response, Response, Request, RouteTableDef, WebSocketResponse, WSMsgType
 
 from loguru import logger
 
 from .message import ClientConfig, handle_client_msg
 from .session import Session, create_character
 from tinymud.api.auth import validate_token
-from tinymud.world import Character, User
+from tinymud.world import Character, Place, User
 
 game_app = Application()
 routes = RouteTableDef()
+
+
+@routes.get('/intro')
+async def game_intro(request: Request) -> Response:
+    """Get login screen 'intro' from specially crafted place.
+
+    Passage links are obviously not supported, but other than that it can be
+    edited as normal.
+    """
+    intro_place = await Place.from_addr('tinymud.intro')
+    if not intro_place:
+        return json_response({'title': 'Tinymud', 'header': ''})
+    else:
+        return json_response({'title': intro_place.title, 'header': intro_place.header})
 
 
 @routes.get('/ws')

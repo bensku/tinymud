@@ -83,6 +83,18 @@ async def validate_credentials(name: str, password: str) -> User:
     return user  # Everything passed, give caller the user
 
 
+class RegistrationFailed(Exception):
+    pass
+
+
+async def create_user(name: str, password: str) -> User:
+    """Creates a new user."""
+    existing_user = await User.select(User.c().name == name)
+    if existing_user:
+        raise RegistrationFailed('user already exists')
+    return User(name=name, password_hash=_hasher.hash(password))
+
+
 def enable_test_login() -> None:
     """Enables test logins.
 

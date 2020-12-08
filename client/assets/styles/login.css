@@ -1,0 +1,17 @@
+#login-root {
+    display: grid;
+    grid-template: "login-form game-intro" / 1fr 2fr;
+    column-gap: 1em;
+}
+
+#login-form {
+    grid-area: login-form;
+}
+
+#game-intro {
+    grid-area: game-intro;
+}
+
+#intro-title {
+    margin-top: 0px;
+}

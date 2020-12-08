@@ -8,7 +8,7 @@ from aiohttp.web import Application, Request, Response, RouteTableDef
 import jwt
 from pydantic import BaseModel
 
-from tinymud.world.user import validate_credentials
+from tinymud.world.user import RegistrationFailed, create_user, validate_credentials
 
 auth_app = Application()
 routes = RouteTableDef()
@@ -43,6 +43,18 @@ async def login(request: Request) -> Response:
     user = await validate_credentials(details.name, details.password)
     token = create_token(user.id)
     return Response(body=jwt.encode(token, _jwt_secret, 'HS256'))
+
+
+@routes.post('/register')
+async def register(request: Request) -> Response:
+    # Will raise error if user cannot be created
+    details = LoginRequest(**await request.json())
+    try:
+        user = await create_user(details.name, details.password)
+    except RegistrationFailed as e:
+        return Response(body=str(e), status=409)
+    # TODO make first user have all permissions?
+    return Response()
 
 
 @routes.post('/renew')

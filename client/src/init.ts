@@ -2,10 +2,12 @@ import { AuthFailure, renewAuthToken } from "./auth";
 import { prepareGame, gamePageHandler } from "./game/main";
 import { loginPageHandler } from "./login";
 import { changePage, registerPage } from "./pages";
+import { registerPageHandler } from "./register";
 
 
 // Register pages
 registerPage('login', loginPageHandler);
+registerPage('register', registerPageHandler);
 registerPage('game', gamePageHandler);
 
 

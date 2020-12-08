@@ -1,4 +1,6 @@
 import CodeMirror from 'codemirror';
+import { clearToken } from '../auth';
+import { changePage } from '../pages';
 import { PassageLinkToken, parseDocument, renderHtml, renderText, visit } from "../render";
 import { GameSocket } from '../socket';
 import { UserRoles } from './main';
@@ -7,6 +9,14 @@ import { ClientConfig, EditorPlaceCreate, EditorPlaceDestroy, EditorPlaceEdit, E
 class Character {
     id: number = -1;
     characterName = document.getElementById('char-name')!;
+    logoutButton = document.getElementById('logout-button')!;
+
+    constructor() {
+        this.logoutButton.addEventListener('click', async (event) => {
+            clearToken(); // Remove credentials
+            await changePage('login');
+        });
+    }
 }
 
 class Place {

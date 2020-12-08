@@ -126,6 +126,9 @@ class Place(Entity):
         self._changes |= ChangeFlags.PASSAGES
 
     async def use_passage(self, character: Character, address: str) -> None:
+        """Makes a character in this place take a passage."""
+        if character.place != self.id:
+            raise ValueError(f'character {character.id} is not in place {address}')
         await self.make_cache()
         if address not in self._cache.passages:
             raise ValueError(f'no passage from {self.address} to {address}')
