@@ -22,7 +22,7 @@ aiohttp = {extras = ["speedups"], version = "*"}
 loguru = "*"
 
 [requires]
-python_full_version = "3.9.0"
+python_version = "3.9"
 
 [scripts]
 test = "python -m pytest tinymud"
