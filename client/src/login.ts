@@ -30,6 +30,6 @@ export async function loginPageHandler() {
 
     // Fetch game intro from server
     const intro: IntroResponse = await (await fetch(`game/intro`)).json();
-    document.getElementById('intro-title')!.innerHTML = renderHtml(parseDocument(intro.title));
-    document.getElementById('intro-content')!.innerHTML = renderText(intro.header);
+    document.getElementById('intro-title')!.innerText = renderText(intro.title);
+    document.getElementById('intro-content')!.innerHTML = renderHtml(parseDocument(intro.header));
 }
