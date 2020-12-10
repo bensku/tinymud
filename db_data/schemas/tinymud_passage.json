@@ -1,0 +1,37 @@
+{
+ "name": "tinymud_passage",
+ "columns": [
+  {
+   "name": "hidden",
+   "db_type": {
+    "name": "boolean",
+    "nullable": false,
+    "foreign_key": null
+   }
+  },
+  {
+   "name": "name",
+   "db_type": {
+    "name": "text",
+    "nullable": true,
+    "foreign_key": null
+   }
+  },
+  {
+   "name": "place",
+   "db_type": {
+    "name": "integer",
+    "nullable": true,
+    "foreign_key": "tinymud_place"
+   }
+  },
+  {
+   "name": "target",
+   "db_type": {
+    "name": "integer",
+    "nullable": false,
+    "foreign_key": "tinymud_place"
+   }
+  }
+ ]
+}

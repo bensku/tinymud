@@ -16,7 +16,7 @@ from tinymud.world.place import init_limbo_place, start_places_tick
 from tinymud.world.user import enable_test_login
 
 
-async def start(db_url: str, game_path: Path, prod_mode: bool, save_interval: int,
+async def start(db_url: str, game_path: Path, prod_mode: bool, update_schema: bool, save_interval: int,
         host: str, port: int, test_login: bool) -> None:
     # Wait until database is up
     # This is especially relevant for development Docker database
@@ -32,7 +32,7 @@ async def start(db_url: str, game_path: Path, prod_mode: bool, save_interval: in
     # Start entity system
     conn_pool = await asyncpg.create_pool(db_url)
     logger.info("Connected to database, starting entity system")
-    await init_entity_system(conn_pool, Path('db_data').absolute(), prod_mode, save_interval)
+    await init_entity_system(conn_pool, Path('db_data').absolute(), prod_mode, update_schema, save_interval)
 
     # Load game from given path before starting any more systems
     load_game(game_path)

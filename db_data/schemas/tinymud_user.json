@@ -1,0 +1,29 @@
+{
+ "name": "tinymud_user",
+ "columns": [
+  {
+   "name": "name",
+   "db_type": {
+    "name": "text",
+    "nullable": false,
+    "foreign_key": null
+   }
+  },
+  {
+   "name": "password_hash",
+   "db_type": {
+    "name": "text",
+    "nullable": false,
+    "foreign_key": null
+   }
+  },
+  {
+   "name": "roles",
+   "db_type": {
+    "name": "integer",
+    "nullable": false,
+    "foreign_key": null
+   }
+  }
+ ]
+}

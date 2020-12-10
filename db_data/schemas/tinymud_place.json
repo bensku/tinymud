@@ -1,0 +1,29 @@
+{
+ "name": "tinymud_place",
+ "columns": [
+  {
+   "name": "address",
+   "db_type": {
+    "name": "text",
+    "nullable": false,
+    "foreign_key": null
+   }
+  },
+  {
+   "name": "header",
+   "db_type": {
+    "name": "text",
+    "nullable": false,
+    "foreign_key": null
+   }
+  },
+  {
+   "name": "title",
+   "db_type": {
+    "name": "text",
+    "nullable": false,
+    "foreign_key": null
+   }
+  }
+ ]
+}

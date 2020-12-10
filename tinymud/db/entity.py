@@ -256,10 +256,10 @@ def entity(entity_type: Type[T]) -> Type[T]:
 _async_init_needed: Set[Type[Entity]] = set()
 
 
-async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool) -> None:
+async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool, update_schema: bool) -> None:
     """Performs late/async initialization on entities."""
     logger.info("Initializing entity types...")
-    migrator = TableMigrator(conn, db_data, prod_mode)
+    migrator = TableMigrator(conn, db_data, prod_mode, update_schema)
     await migrator.create_sys_tables()
 
     # Execute async/late init
@@ -330,7 +330,8 @@ async def _async_init_entities(conn: Connection, db_data: Path, prod_mode: bool)
         entity_type._next_id = current_id + 1 if current_id else 0
 
 
-async def init_entity_system(conn_pool: Pool, db_data: Path, prod_mode: bool, save_interval: float) -> None:
+async def init_entity_system(conn_pool: Pool, db_data: Path, prod_mode: bool, update_schema: bool,
+        save_interval: float) -> None:
     # Assign global connection pool and queue for writes
     global _conn_pool
     global _db_queue
@@ -341,7 +342,7 @@ async def init_entity_system(conn_pool: Pool, db_data: Path, prod_mode: bool, sa
     # Perform async initialization as needed for entities
     async with conn_pool.acquire() as conn:
         async with conn.transaction():  # Either all migrations work, or none do
-            await _async_init_entities(conn, db_data, prod_mode)
+            await _async_init_entities(conn, db_data, prod_mode, update_schema)
     _async_init_needed.clear()
 
 

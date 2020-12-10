@@ -1,0 +1,21 @@
+{
+ "name": "tinymud_gameobj",
+ "columns": [
+  {
+   "name": "name",
+   "db_type": {
+    "name": "text",
+    "nullable": true,
+    "foreign_key": null
+   }
+  },
+  {
+   "name": "obj_type_id",
+   "db_type": {
+    "name": "integer",
+    "nullable": false,
+    "foreign_key": null
+   }
+  }
+ ]
+}

@@ -84,7 +84,8 @@ def test_schema_update() -> None:
         'new_field': str
     }
     old_schema = schema.new_table_schema('FooTable', old_fields)
-    new_schema, alter_reqs = schema.update_table_schema(old_schema, new_fields)
+    new_schema = schema.new_table_schema('FooTable', new_fields)  # type: ignore
+    new_schema, alter_reqs = schema.update_table_schema(old_schema, new_schema)
 
     # Is the new schema correct?
     expected = textwrap.dedent("""    CREATE TABLE FooTable (

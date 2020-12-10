@@ -1,0 +1,13 @@
+{
+ "name": "tinymud__typemapping",
+ "columns": [
+  {
+   "name": "id_str",
+   "db_type": {
+    "name": "text",
+    "nullable": false,
+    "foreign_key": null
+   }
+  }
+ ]
+}

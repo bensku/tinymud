@@ -1,0 +1,37 @@
+{
+ "name": "tinymud_item",
+ "columns": [
+  {
+   "name": "name",
+   "db_type": {
+    "name": "text",
+    "nullable": true,
+    "foreign_key": null
+   }
+  },
+  {
+   "name": "obj_type_id",
+   "db_type": {
+    "name": "integer",
+    "nullable": false,
+    "foreign_key": null
+   }
+  },
+  {
+   "name": "owner",
+   "db_type": {
+    "name": "integer",
+    "nullable": true,
+    "foreign_key": "tinymud_character"
+   }
+  },
+  {
+   "name": "place",
+   "db_type": {
+    "name": "integer",
+    "nullable": true,
+    "foreign_key": "tinymud_place"
+   }
+  }
+ ]
+}

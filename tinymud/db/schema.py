@@ -129,6 +129,8 @@ def get_post_create(table: TableSchema) -> List[str]:
         db_type = column['db_type']
         if 'foreign_key' in db_type and db_type['foreign_key']:
             colname = column["name"]
+            # Drop old constraint (if any exist) and add new one in place
+            # This is safe, because Tinymud never migrates while running
             sql.append(f'ALTER TABLE {name} DROP CONSTRAINT IF EXISTS fk_{colname}')
             sql.append((f'ALTER TABLE {name} ADD CONSTRAINT fk_{colname}'
                 f' FOREIGN KEY ({colname})'
@@ -144,7 +146,7 @@ class AlterRequest:
     input_needed: Dict[str, str] = field(default_factory=dict)
 
 
-def update_table_schema(old_schema: TableSchema, fields: Dict[str, type]) -> Tuple[TableSchema, List[AlterRequest]]:
+def update_table_schema(old_schema: TableSchema, new_schema: TableSchema) -> Tuple[TableSchema, List[AlterRequest]]:
     """Creates an updated table schema based on current class fields.
 
     Columns in old schema that do not have matching fields are removed.
@@ -159,6 +161,9 @@ def update_table_schema(old_schema: TableSchema, fields: Dict[str, type]) -> Tup
     alter_requests: List[AlterRequest] = []  # Alter requests to show to users
 
     # Remove columns that no longer have fields
+    fields = {}
+    for column in new_schema['columns']:
+        fields[column['name']] = column
     field_names = fields.keys()
     old_names = []
     for column in old_columns:
@@ -173,7 +178,7 @@ def update_table_schema(old_schema: TableSchema, fields: Dict[str, type]) -> Tup
     # Append columns for new fields at end
     for name in sorted(fields.keys()):
         if name not in old_names:
-            column = create_column(name, fields[name])
+            column = fields[name]
             new_columns.append(column)
 
             # SQL to add a new column for non-null columns is not one-liner
@@ -187,7 +192,7 @@ def update_table_schema(old_schema: TableSchema, fields: Dict[str, type]) -> Tup
                 sql.append(f'UPDATE {table_name} SET {name} = $existing_value$')
                 sql.append(f'ALTER TABLE {table_name} ALTER COLUMN {name} SET NOT NULL')
                 alter_requests.append(AlterRequest(f"add non-null column {name}",
-                    sql, {'$existing_value$': "value needed for existing rows"}))
+                    sql, {'$existing_value$': "value for existing rows"}))
 
     return {'name': table_name, 'columns': new_columns}, alter_requests
 

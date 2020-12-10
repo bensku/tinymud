@@ -38,7 +38,9 @@ def parse_args() -> argparse.Namespace:
         help="Disable authentication (!!!) and restrict connections to localhost")
     parser.add_argument('--enable-profiler', action='store_true',
         help="Enables profiling")
-    parser.add_argument('--prod', default=False, help="Enables production mode.")  # FIXME WIP
+    parser.add_argument('--update-schema', action='store_true',
+        help="Generate and update table schemas interactively.")
+    parser.add_argument('--prod', action='store_true', help="Enables production mode.")
     parser.add_argument('--save-interval', default=30, type=float,
         help="Sets the database commit interval (in seconds).")
     parser.add_argument('--host', default='localhost', help="Application host.")
@@ -93,6 +95,7 @@ _db_url: str  # Database URL for subprocess usage
 _dev_db = None  # Development database container (if present)
 _game_path: Path  # Game directory
 _prod_mode: bool
+_update_schema: bool
 _save_interval: int
 _host: str
 _port: int
@@ -106,6 +109,9 @@ _observer = None  # Observer for --watch, if watching any files
 
 
 def _mudproc_entrypoint() -> None:
+    if _update_schema:  # Need interactive console
+        sys.stdin = open(0)
+
     if _observer:  # Let launcher process handle restarting
         _observer.stop()
 
@@ -129,7 +135,8 @@ def _mudproc_entrypoint() -> None:
     import tinymud
     loop = asyncio.get_event_loop()
     loop.create_task(tinymud.start(db_url=_db_url, game_path=_game_path,
-        prod_mode=_prod_mode, save_interval=_save_interval, host=_host, port=_port, test_login=_test_login))
+        prod_mode=_prod_mode, update_schema=_update_schema, save_interval=_save_interval,
+        host=_host, port=_port, test_login=_test_login))
     loop.run_forever()
 
 
@@ -174,6 +181,7 @@ if __name__ == '__main__':
 
     # Make rest of arguments available for forking
     _prod_mode = args.prod
+    _update_schema = args.update_schema
     _save_interval = args.save_interval
     _host = args.host
     _port = args.port
