@@ -43,6 +43,14 @@ class UnauthorizedMessage(Exception):
     """Raised when client sends message without required role."""
 
 
+class UserError(Exception):
+    """User error.
+
+    When client cannot validate data, errors of this type should be used.
+    The message will be displayed to end-user, so capitalize properly!
+    """
+
+
 async def handle_client_msg(session: Session, msg: Dict[Any, Any]) -> None:
     """Handles a deserialized JSON message from client."""
     cls = _client_msg_types[msg['type']]
@@ -50,7 +58,12 @@ async def handle_client_msg(session: Session, msg: Dict[Any, Any]) -> None:
         raise UnauthorizedMessage(f"user {session.user.name} is missing any of roles {cls._allowed_roles}")
 
     obj = cls(**msg)  # Use Pydantic to validate and create instance for us to call
-    await obj.on_receive(session)
+    try:
+        await obj.on_receive(session)
+    except UserError as e:
+        logger.debug(f"User error from {session.user.name}: {e}")
+        # We'll just send an alert to the client for now
+        await session.send_msg(DisplayAlert(alert=str(e)))
 
 
 class VisibleObj(BaseModel):
@@ -89,6 +102,11 @@ class CreateCharacter(ServerMessage):
     options: List[str]
 
 
+class DisplayAlert(ServerMessage):
+    """Shows an alert to the client."""
+    alert: str
+
+
 # Omit _clientmsg, this is special case for now
 # TODO revisit when character list support lands
 class PickCharacterTemplate(ClientMessage):
@@ -120,9 +138,11 @@ class EditorTeleport(ClientMessage):
 
     async def on_receive(self, session: Session) -> None:
         place = await Place.from_addr(self.address)
+        if not place:
+            raise UserError(f"Place '{self.address}' does not exist")
         character = await Character.get(self.character)
-        if not place or not character:
-            raise ValueError('missing place or character')
+        if not character:
+            raise ValueError('missing character')
         await character.move(place)
         logger.debug(f"Editor {session.user.name} admin-teleported {character.id} to {self.address}")
 
@@ -137,8 +157,8 @@ class EditorPlaceEdit(ClientMessage):
 
     async def on_receive(self, session: Session) -> None:
         place = await Place.from_addr(self.address)
-        if not place:
-            raise ValueError(f"place {self.address} not found")
+        if not place:  # Client should have known better
+            raise ValueError(f"Place {self.address} not found")
         logger.debug(f"Place {place.address} edited by {session.user.name}")
         place.title = self.title
         place.header = self.header
@@ -153,7 +173,7 @@ class EditorPlaceCreate(ClientMessage):
     async def on_receive(self, session: Session) -> None:
         place = await Place.from_addr(self.address)
         if place:
-            raise ValueError(f"place {self.address} already exists")
+            raise UserError(f"Place '{self.address}' already exists")
         # Make place with no content, editor can fill that in later
         Place(address=self.address, title="", header="")
 
@@ -166,6 +186,15 @@ class EditorPlaceDestroy(ClientMessage):
     async def on_receive(self, session: Session) -> None:
         place = await Place.from_addr(self.address)
         if not place:
-            raise ValueError(f"place {self.address} not found")
-        # FIXME safeguard characters against destruction
+            raise UserError(f"Place '{self.address}' not found")
+        if place.address == 'tinymud.limbo':
+            raise UserError("Cannot destroy a system place")
+
+        # Teleport all characters to safety
+        limbo = await Place.from_addr('tinymud.limbo')
+        assert limbo
+        for character in await place.characters():
+            await character.move(limbo)
+
+        # Destroy once it is empty
         await place.destroy()

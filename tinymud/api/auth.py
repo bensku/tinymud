@@ -33,7 +33,7 @@ def create_token(user_id: int) -> AuthToken:
 
     The token is valid for a while, and its validity starts now.
     """
-    valid_until = int(time.time()) + 3600  # 1 hour - TODO configurable token lifetime
+    valid_until = int(time.time()) + 2 * 3600  # 2 hours - TODO configurable token lifetime
     return {'user_id': user_id, 'exp': valid_until}
 
 

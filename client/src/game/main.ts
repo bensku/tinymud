@@ -2,7 +2,7 @@ import { createCharacter } from "../character";
 import { GameView } from "./view";
 import { changePage } from "../pages";
 import { GameSocket, openGameSocket, ServerMessage } from "../socket";
-import { ClientConfig, CreateCharacter, UpdateCharacter, UpdatePlace } from "./message";
+import { ClientConfig, CreateCharacter, DisplayAlert, UpdateCharacter, UpdatePlace } from "./message";
 
 let config: ClientConfig;
 let view: GameView;
@@ -24,6 +24,11 @@ async function handleReceivedMsg(msg: ServerMessage) {
         case 'UpdateCharacter':
             view.updateCharacter(msg as UpdateCharacter);
             break;
+        case 'DisplayAlert':
+            alert((msg as DisplayAlert).alert);
+            break;
+        default:
+            console.log(`Warning: unknown message type ${msg.type}`);
     }
 }
 
@@ -31,7 +36,12 @@ export async function runGame() {
     await changePage('game'); // In case we weren't there yet
     // Loop forever, handling messages from server
     while (true) {
-        await handleReceivedMsg(await ws.receive());
+        try {
+            await handleReceivedMsg(await ws.receive());
+        } catch (e) {
+            console.log('Websocket disconnected, reloading...');
+            location.reload(); // TODO can we do this without full reload?
+        }
     }
 }
 

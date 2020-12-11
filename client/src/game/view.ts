@@ -35,7 +35,8 @@ class PlaceEditor {
     deleteButton = document.getElementById('place-delete-button')!;
     editButton = document.getElementById('place-edit-button')!;
     saveButton = document.getElementById('place-save-button')!;
-    address = document.getElementById('place-address')!;
+    address = document.getElementById('place-address') as HTMLInputElement;
+    teleportButton = document.getElementById('teleport-button') as HTMLButtonElement;
 
     headerEditor: CodeMirror.Editor | undefined;
     createPlace: boolean = false;
@@ -50,8 +51,7 @@ class PlaceEditor {
         let headerText;
         if (create) {
             this.createPlace = true;
-            this.address.outerHTML = `<input id="place-address" type="text" placeholder="place.address">`;
-            this.address = document.getElementById('place-address')!;
+            this.address.value = ''; // Need to enter new place address
 
             // Also don't pre-fill title or header
             titleText = '';
@@ -60,7 +60,11 @@ class PlaceEditor {
             // Pre-fill with current content
             titleText = renderText(place.title.innerText);
             headerText = renderText(place.headerText);
+
+            // Disable address to avoid saving to wrong place
+            this.address.disabled = true;
         }
+        this.teleportButton.disabled = true; // No teleports while editing
 
         // Make title editable
         place.title.outerHTML = `<input id="place-title" type="text" value="${titleText}">`;
@@ -83,14 +87,11 @@ class PlaceEditor {
 
     finish(place: Place, character: Character, ws: GameSocket): void {
         if (this.createPlace) {
-            const address = (this.address as HTMLInputElement).value;
+            const address = this.address.value;
             if (address == '') {
                 alert('Place address needed.');
                 return;
             }
-            // Swap back normal address element
-            this.address.outerHTML = `<code id="place-address">${address}</code>`;
-            this.address = document.getElementById('place-address')!;
             
             // Create empty place, we'll update the content later
             const createMsg: EditorPlaceCreate = {
@@ -124,6 +125,10 @@ class PlaceEditor {
         place.header = document.getElementById('place-header')!;
         place.headerText = header; // In case this is edited again
 
+        // Allow using address for teleport again
+        this.address.disabled = false;
+        this.teleportButton.disabled = false;
+
         // Compute passages by visiting parsed header tokens
         const passages: PassageData[] = [];
         visit(headerTokens, (token) => {
@@ -137,7 +142,7 @@ class PlaceEditor {
         // Tell the server about changes
         const msg: EditorPlaceEdit = {
             type: 'EditorPlaceEdit',
-            address: this.address.innerText,
+            address: this.address.value,
             title: title,
             header: header,
             passages: passages
@@ -150,12 +155,12 @@ class PlaceEditor {
     }
 
     delete(place: Place, ws: GameSocket): void {
-        if (!confirm(`Deleting place '${place.title.innerText}. Are you sure?'`)) {
+        if (!confirm(`Deleting place '${this.address.value}'. Are you sure?'`)) {
             return; // User canceled
         }
         const msg: EditorPlaceDestroy = {
             type: 'EditorPlaceDestroy',
-            address: this.address.innerText
+            address: this.address.value
         }
         ws.send(msg);
     }
@@ -187,12 +192,22 @@ export class GameView {
 
             editor.createButton.addEventListener('click', (event) => editor.enable(this.place, true));
             editor.deleteButton.addEventListener('click', (event) => editor.delete(this.place, ws));
+            
+            // Teleport button for editors to move around different places
+            editor.teleportButton.addEventListener('click', (event) => {
+                const teleportMsg: EditorTeleport = {
+                    type: 'EditorTeleport',
+                    character: this.character.id,
+                    address: editor.address.value
+                };
+                ws.send(teleportMsg);
+            });
         }
     }
 
     updatePlace(msg: UpdatePlace) {
         if (this.editor) {
-            this.editor.address.innerText = renderText(msg.address);
+            this.editor.address.value = renderText(msg.address);
         }
         if (msg.title) {
             this.place.title.innerText = renderText(msg.title);

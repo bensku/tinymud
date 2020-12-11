@@ -31,6 +31,10 @@ export interface CreateCharacter extends ServerMessage {
     options: string[];
 }
 
+export interface DisplayAlert extends ServerMessage {
+    alert: string;
+}
+
 export interface PickCharacterTemplate extends ClientMessage {
     name: string;
     selected: number
