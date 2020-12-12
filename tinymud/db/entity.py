@@ -1,4 +1,7 @@
-"""Tinymud entity system."""
+"""Tinymud entity system.
+
+Entities are objects that are persisted in the database.
+"""
 
 import asyncio
 from pathlib import Path
